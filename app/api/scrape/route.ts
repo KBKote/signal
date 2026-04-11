@@ -1,32 +1,61 @@
 import { NextResponse } from 'next/server'
-import { scrapeUnauthorizedResponse } from '@/lib/scrape-auth'
+import { scrapeAccessDeniedResponse } from '@/lib/scrape-auth'
+import { runRetentionCleanup } from '@/lib/db-cleanup'
+import { DEFAULT_PIPELINE_PREFS, parsePipelinePreferencesBody } from '@/lib/pipeline-preferences'
+import { getScrapePack } from '@/lib/scrape-sources'
 import { scrapeRssFeeds } from '@/lib/scraper/rss'
 import { scrapeReddit } from '@/lib/scraper/reddit'
 import { scrapeHackerNews } from '@/lib/scraper/hn'
-import { supabaseAdmin } from '@/lib/supabase-server'
+import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export const maxDuration = 60 // Vercel function timeout (seconds)
 
 export async function POST(request: Request) {
-  const denied = scrapeUnauthorizedResponse(request)
+  const denied = await scrapeAccessDeniedResponse(request)
   if (denied) return denied
 
+  let prefs = DEFAULT_PIPELINE_PREFS
+  try {
+    const ct = request.headers.get('content-type') ?? ''
+    if (ct.includes('application/json')) {
+      const raw: unknown = await request.json()
+      prefs = parsePipelinePreferencesBody(raw)
+    }
+  } catch {
+    prefs = DEFAULT_PIPELINE_PREFS
+  }
+
+  const pack = getScrapePack(prefs)
+  console.log(
+    `[Scrape] topicMode=${prefs.topicMode} rss=${pack.rssFeeds.length} subs=${pack.subreddits.length}`
+  )
+
   const startTime = Date.now()
+  const db = getSupabaseAdmin()
 
   try {
-    // 1. Collect from all sources in parallel
+    // 1. Collect from all sources in parallel (reach widens by topic)
     console.log('[Scrape] Starting data collection...')
     const [rssStories, redditStories, hnStories] = await Promise.all([
-      scrapeRssFeeds(),
-      scrapeReddit(),
-      scrapeHackerNews(),
+      scrapeRssFeeds(pack.rssFeeds, pack.matchesText),
+      scrapeReddit(pack.subreddits, pack.matchesText),
+      scrapeHackerNews(pack.hnQuery, pack.matchesText),
     ])
 
     const allStories = [...rssStories, ...redditStories, ...hnStories]
     console.log(`[Scrape] Collected ${allStories.length} stories total`)
 
     if (allStories.length === 0) {
-      return NextResponse.json({ success: true, inserted: 0, message: 'No stories matched keyword filter' })
+      const cleanup = await runRetentionCleanup(db).catch((e) => {
+        console.error('[Scrape] retention cleanup:', e)
+        return null
+      })
+      return NextResponse.json({
+        success: true,
+        inserted: 0,
+        message: 'No stories matched keyword filter',
+        cleanup: cleanup ?? undefined,
+      })
     }
 
     // 2. Deduplicate URLs within this batch
@@ -38,7 +67,7 @@ export async function POST(request: Request) {
     })
 
     // 3. Upsert to DB — ignore conflicts on url (already scraped)
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await db
       .from('raw_stories')
       .upsert(dedupedStories, { onConflict: 'url', ignoreDuplicates: true })
       .select('id')
@@ -53,6 +82,11 @@ export async function POST(request: Request) {
 
     console.log(`[Scrape] Done. Inserted ${inserted} new stories in ${elapsed}s`)
 
+    const cleanup = await runRetentionCleanup(db).catch((e) => {
+      console.error('[Scrape] retention cleanup:', e)
+      return null
+    })
+
     return NextResponse.json({
       success: true,
       inserted,
@@ -63,6 +97,7 @@ export async function POST(request: Request) {
         reddit: redditStories.length,
         hn: hnStories.length,
       },
+      cleanup: cleanup ?? undefined,
     })
   } catch (err) {
     console.error('[Scrape] Unexpected error:', err)

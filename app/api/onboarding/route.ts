@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
-import { supabaseAdmin } from '@/lib/supabase-server'
+import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { loadUserProfileRow } from '@/lib/user-profiles-db'
 
 export async function GET() {
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   const onboarding_completed =
     typeof body.onboarding_completed === 'boolean' ? body.onboarding_completed : true
 
-  const { error } = await supabaseAdmin.from('user_profiles').upsert(
+  const { error } = await getSupabaseAdmin().from('user_profiles').upsert(
     {
       user_id: user.id,
       profile,

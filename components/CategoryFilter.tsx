@@ -2,11 +2,11 @@
 
 export type Category = 'all' | 'opportunity' | 'idea' | 'intel'
 
-const TABS: { value: Category; label: string; color: string }[] = [
-  { value: 'all', label: 'All', color: 'text-black/75' },
-  { value: 'opportunity', label: 'Opportunities', color: 'text-black/75' },
-  { value: 'idea', label: 'Ideas', color: 'text-black/75' },
-  { value: 'intel', label: 'Intel', color: 'text-black/75' },
+const TABS: { value: Category; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'opportunity', label: 'Opportunities' },
+  { value: 'idea', label: 'Ideas' },
+  { value: 'intel', label: 'Intel' },
 ]
 
 interface Props {
@@ -17,26 +17,24 @@ interface Props {
 
 export function CategoryFilter({ active, onChange, counts }: Props) {
   return (
-    <nav className="flex gap-1 rounded-xl border border-black/15 bg-white/70 p-1">
+    <nav className="flex gap-1 rounded-xl border border-white/10 bg-black/45 p-1 backdrop-blur-md">
       {TABS.map((tab) => {
         const isActive = active === tab.value
         return (
           <button
             key={tab.value}
             onClick={() => onChange(tab.value)}
-            className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
               isActive
-                ? 'bg-black text-white shadow'
-                : 'text-black/60 hover:text-black'
+                ? 'bg-white text-black shadow'
+                : 'text-zinc-400 hover:text-zinc-100'
             }`}
           >
-            <span className={isActive ? 'text-white' : tab.color}>
-              {tab.label}
-            </span>
+            <span className={isActive ? 'text-black' : 'text-zinc-300'}>{tab.label}</span>
             {counts[tab.value] > 0 && (
               <span
-                className={`text-xs px-1.5 py-0.5 rounded-full ${
-                  isActive ? 'bg-white/20 text-white' : 'bg-black/10 text-black/60'
+                className={`rounded-full px-1.5 py-0.5 text-xs ${
+                  isActive ? 'bg-black/10 text-black' : 'bg-white/10 text-zinc-300'
                 }`}
               >
                 {counts[tab.value]}

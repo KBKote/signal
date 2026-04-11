@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
 import { encryptSecret } from '@/lib/crypto-user-secrets'
 import { isPlausibleAnthropicKey } from '@/lib/user-credentials'
-import { supabaseAdmin } from '@/lib/supabase-server'
+import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export async function POST(req: Request) {
   const user = await getSessionUser()
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
   try {
     const { ciphertext, iv } = encryptSecret(apiKey)
-    const { error } = await supabaseAdmin.from('user_api_credentials').upsert(
+    const { error } = await getSupabaseAdmin().from('user_api_credentials').upsert(
       {
         user_id: user.id,
         anthropic_key_ciphertext: ciphertext,
@@ -56,7 +56,7 @@ export async function DELETE() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const { error } = await supabaseAdmin.from('user_api_credentials').delete().eq('user_id', user.id)
+  const { error } = await getSupabaseAdmin().from('user_api_credentials').delete().eq('user_id', user.id)
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

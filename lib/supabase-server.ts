@@ -1,9 +1,18 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-// Admin client — server-only, bypasses RLS
-// SUPABASE_SERVICE_ROLE_KEY is never exposed to the browser
-// Import this ONLY from API routes and server-side lib files
-export const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+let cached: SupabaseClient | null = null
+
+/**
+ * Lazily creates the service-role client so `next build` can import this module without
+ * env vars; the first DB call throws if keys are missing.
+ */
+export function getSupabaseAdmin(): SupabaseClient {
+  if (cached) return cached
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) {
+    throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+  }
+  cached = createClient(url, key)
+  return cached
+}

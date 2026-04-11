@@ -5,101 +5,35 @@ description: AI filtering agent that uses Claude Haiku to score and categorize r
 
 # Filter Agent
 
-You are the intelligence layer of the Signal app. You take raw, unfiltered stories from the database and use Claude Haiku to score them against the user's profile. Your job is to separate gold from noise.
+You are the intelligence layer of the Signal app. Shared `raw_stories` are scraped into the pool; each **authenticated user** runs Claude Haiku to score **their** not-yet-scored rows into `scored_stories` (BYOK).
 
-## Your Responsibilities
-- Read unprocessed stories from `raw_stories` (where `processed = false`)
-- Batch them into groups of 15-20 for a single Claude Haiku API call
-- Score each story on three dimensions (see scoring below)
-- Write scored results to `scored_stories` table
-- Mark processed stories as `processed = true` in `raw_stories`
-- Log token usage to `api_usage` table after every API call
+## Your responsibilities (matches production code)
 
-## The User Profile
-This is the context you give Claude Haiku so it can score relevance. Always include this in your system prompt:
+1. **Read candidates** from [`raw_stories`](lib/filter.ts): newest first (`scraped_at` descending), up to `RAW_FETCH_LIMIT` (env-tunable, see `lib/filter.ts`).
+2. **Skip rows already scored for this user** using [`user_raw_scored`](supabase/migrations/20260410120001_user_raw_scored.sql) (`user_id` + `raw_story_id`). There is **no** `processed` flag on `raw_stories`; progress is per-user.
+3. **Batch** stories (see `BATCH_SIZE` in `lib/filter.ts`) into **one Claude Haiku call per batch** — never one API call per story.
+4. **Parse** model JSON; track `claudeParseFailures` / `parseWarning` when batches are unparseable ([`app/api/filter/route.ts`](app/api/filter/route.ts)).
+5. **Insert** high-signal rows into [`scored_stories`](supabase/schema.sql) (`user_id`, optional `raw_story_id`, score, category, summary, why, …). Low scores / `noise` may be omitted from `scored_stories` but raw rows are still marked in `user_raw_scored`.
+6. **Upsert** [`user_raw_scored`](supabase/migrations/20260410120001_user_raw_scored.sql) for every story in the batch that was processed (including noise), so the same raw is not re-sent for that user.
+7. **Log** aggregate token usage to [`api_usage`](supabase/schema.sql) after the run.
 
-```
-You are scoring news stories for a specific user. Here is their profile:
+## User profile and pipeline prefs
 
-BACKGROUND:
-- 3-4 years in crypto, strong Ethereum ecosystem knowledge
-- New to software development (1-2 months in), building at the AI/crypto intersection
-- Looking to spot opportunities before they become mainstream
+- Profile JSON lives in `user_profiles`; scoring prompt is built in [`lib/user-profile-prompt.ts`](lib/user-profile-prompt.ts) / [`lib/user-profile.ts`](lib/user-profile.ts).
+- Per-run topic/scope prefs come from JSON `POST` to [`/api/filter`](app/api/filter/route.ts) via [`lib/pipeline-preferences.ts`](lib/pipeline-preferences.ts) (`buildPreferenceOverlay`).
 
-GOALS (score stories higher if they relate to these):
-- Opportunity detection: arb strategies, market inefficiencies, early projects gaining traction
-- Project ideas: technical patterns worth building, gaps in the market
-- Career: learning about cool startups, internship opportunities in AI/crypto
-- Staying informed on Ethereum, DeFi, AI agents, LLMs
+## Model and cost rules
 
-FILTER OUT (score 1-2 if story is mainly about these):
-- Pure price speculation ("Bitcoin will hit $X")
-- Celebrity/influencer drama
-- Regulatory news with no actionable angle
-- Mainstream tech news unrelated to AI or crypto
+- Model: **`claude-haiku-4-5-20251001`** only for filtering.
+- Batch only; log tokens; keep monthly cost targets per project docs ([`CLAUDE.md`](CLAUDE.md)).
 
-CATEGORIES:
-- "opportunity": something the user could act on or trade on right now
-- "idea": a pattern or gap worth building something around
-- "intel": important context to understand the ecosystem
-- "noise": not relevant — score 1-3
-```
+## Key files
 
-## Scoring Format
-Ask Claude Haiku to return JSON for each story:
-```json
-{
-  "id": "story-uuid",
-  "score": 8,
-  "category": "opportunity",
-  "why": "MEV bot pattern on a new L2 with thin liquidity — similar to the Polymarket arb the user is interested in",
-  "summary": "Two-sentence plain-English summary of what this actually is"
-}
-```
+- [`lib/filter.ts`](lib/filter.ts) — fetch raw pool, diff `user_raw_scored`, batch Claude, insert `scored_stories`, upsert `user_raw_scored`, insert `api_usage`.
+- [`app/api/filter/route.ts`](app/api/filter/route.ts) — authenticated POST, BYOK key, prefs body, returns `parseWarning` when needed.
+- [`lib/pipeline-preferences.ts`](lib/pipeline-preferences.ts) — topic/scope overlay for the scoring prompt.
 
-Score scale:
-- **9-10**: Must see. High-signal opportunity or major ecosystem event
-- **7-8**: Worth reading today
-- **5-6**: Useful context, read when time permits
-- **3-4**: Low relevance, borderline
-- **1-2**: Noise — don't surface in UI
+## Do not assume
 
-Only store stories with score >= 5 in `scored_stories`.
-
-## Cost Control Rules (Critical)
-- Always use model: `claude-haiku-4-5-20251001` — never anything else
-- Batch 15-20 stories per API call — never call per-story
-- Log input_tokens + output_tokens after every call
-- If a batch call costs more than $0.01, something is wrong — investigate
-- Monthly budget target: under $3
-
-## Database Schema: scored_stories
-```sql
-id              uuid primary key
-raw_story_id    uuid references raw_stories(id)
-title           text
-url             text
-source          text
-summary         text      -- Claude's 2-sentence summary
-category        text      -- 'opportunity', 'idea', 'intel'
-score           int       -- 1-10
-why             text      -- Claude's reasoning (shown in UI on hover)
-published_at    timestamptz
-scored_at       timestamptz default now()
-seen            boolean default false
-```
-
-## Database Schema: api_usage
-```sql
-id              uuid primary key
-run_at          timestamptz default now()
-stories_scored  int
-input_tokens    int
-output_tokens   int
-estimated_cost  numeric(10,6)  -- in USD
-```
-
-## Key Files
-- `lib/filter.ts` — main filtering logic, Claude API calls
-- `lib/user-profile.ts` — the user profile object (single source of truth)
-- `app/api/filter/route.ts` — HTTP endpoint to trigger a filter run
+- No global `raw_stories.processed` column — removed in favor of per-user `user_raw_scored`.
+- Scoring is **per `user_id`**; `scored_stories` rows are scoped by RLS for reads, service role for pipeline writes.

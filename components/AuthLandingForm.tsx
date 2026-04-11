@@ -83,8 +83,8 @@ export function AuthLandingForm() {
   }
 
   return (
-    <div className="w-full max-w-md rounded-3xl border border-black/10 bg-white/95 p-8 text-black shadow-sm backdrop-blur-md">
-      <div className="relative z-0 flex gap-2 rounded-xl border border-black/10 bg-black/[0.03] p-1">
+    <div className="w-full max-w-md rounded-3xl border border-white/10 bg-black/70 p-8 text-zinc-100 shadow-xl backdrop-blur-xl">
+      <div className="relative z-0 flex gap-2 rounded-xl border border-white/10 bg-black/40 p-1">
         <button
           type="button"
           onClick={() => {
@@ -92,7 +92,7 @@ export function AuthLandingForm() {
             setMessage('')
           }}
           className={`relative z-10 flex-1 rounded-lg py-2 text-sm font-medium transition ${
-            mode === 'signin' ? 'bg-white text-black shadow-sm' : 'text-black/55 hover:text-black'
+            mode === 'signin' ? 'bg-white text-black shadow-sm' : 'text-zinc-400 hover:text-zinc-100'
           }`}
         >
           Log in
@@ -104,33 +104,33 @@ export function AuthLandingForm() {
             setMessage('')
           }}
           className={`relative z-10 flex-1 rounded-lg py-2 text-sm font-medium transition ${
-            mode === 'signup' ? 'bg-white text-black shadow-sm' : 'text-black/55 hover:text-black'
+            mode === 'signup' ? 'bg-white text-black shadow-sm' : 'text-zinc-400 hover:text-zinc-100'
           }`}
         >
           Sign up
         </button>
       </div>
 
-      <p className="mt-6 font-mono text-xs text-black/55">
+      <p className="mt-6 font-mono text-xs text-zinc-500">
         {mode === 'signin' ? 'Welcome back' : 'Create your account'}
       </p>
-      <h2 className="mt-1 font-serif text-2xl tracking-tight">
+      <h2 className="mt-1 font-serif text-2xl tracking-tight text-zinc-50">
         {mode === 'signin' ? 'Log in' : 'Sign up'}
       </h2>
-      <p className="mt-2 text-sm text-black/65">
+      <p className="mt-2 text-sm text-zinc-400">
         Email and password are stored by Supabase. Next you&apos;ll add your Anthropic API key in Settings, then you can
         open your feed.
       </p>
 
       {urlError === 'auth' ? (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <p className="mt-4 rounded-lg border border-red-500/40 bg-red-950/50 px-3 py-2 text-sm text-red-200">
           Sign-in failed. Try again or request a new confirmation email from Supabase.
         </p>
       ) : null}
 
       <form onSubmit={(e) => void handleSubmit(e)} className="mt-6 space-y-4">
         <div>
-          <label htmlFor="auth-email" className="block font-mono text-xs text-black/55">
+          <label htmlFor="auth-email" className="block font-mono text-xs text-zinc-400">
             Email
           </label>
           <input
@@ -140,12 +140,12 @@ export function AuthLandingForm() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 text-sm outline-none focus:border-black/35"
+            className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
             placeholder="you@example.com"
           />
         </div>
         <div>
-          <label htmlFor="auth-password" className="block font-mono text-xs text-black/55">
+          <label htmlFor="auth-password" className="block font-mono text-xs text-zinc-400">
             Password
           </label>
           <input
@@ -156,23 +156,21 @@ export function AuthLandingForm() {
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 text-sm outline-none focus:border-black/35"
+            className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
             placeholder="At least 6 characters"
           />
         </div>
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-xl border border-black/20 bg-black py-2.5 text-sm font-medium text-white transition hover:bg-black/85 disabled:opacity-60"
+          className="w-full rounded-xl border border-white/20 bg-white py-2.5 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:opacity-60"
         >
           {busy ? 'Please wait…' : mode === 'signin' ? 'Log in' : 'Create account'}
         </button>
       </form>
 
       {message ? (
-        <p className="mt-4 rounded-lg border border-black/10 bg-black/[0.03] px-3 py-2 text-sm text-black/80">
-          {message}
-        </p>
+        <p className="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-zinc-300">{message}</p>
       ) : null}
     </div>
   )

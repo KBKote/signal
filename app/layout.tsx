@@ -16,8 +16,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className="h-full" data-scroll-behavior="smooth">
-      <body className={`${inter.className} min-h-full antialiased`}>
+    <html lang="en" className="h-full bg-[var(--background)]" data-scroll-behavior="smooth">
+      <body
+        className={`${inter.className} min-h-dvh bg-[var(--background)] text-[var(--foreground)] antialiased`}
+      >
         <ServiceWorkerRegistrar />
         {children}
       </body>

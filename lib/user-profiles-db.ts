@@ -1,11 +1,10 @@
-import { supabaseAdmin } from './supabase-server'
+import { getSupabaseAdmin } from './supabase-server'
 
 export async function loadUserProfileRow(userId: string): Promise<{
   profile: unknown
   onboarding_completed: boolean
 } | null> {
-  const { data, error } = await supabaseAdmin
-    .from('user_profiles')
+  const { data, error } = await getSupabaseAdmin().from('user_profiles')
     .select('profile, onboarding_completed')
     .eq('user_id', userId)
     .maybeSingle()

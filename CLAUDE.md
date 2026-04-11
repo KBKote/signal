@@ -115,7 +115,7 @@ Key profile attributes:
 **BUG 2: Supabase client created at module load → crashes Next.js static build**
 - Symptom: `Error: supabaseUrl is required` during `next build`, emitted from `lib/supabase.ts`.
 - Root cause: `createClient(...)` was called at the top level of the module, which runs during Next.js static generation when env vars are not present.
-- Fix: wrap clients in lazy getter functions (called on first use, not on import). Used a `Proxy` to keep the same `supabase` / `supabaseAdmin` export names so no callers needed changing.
+- Fix: wrap clients in lazy getter functions (called on first use, not on import). Early scaffold briefly used a `Proxy` re-export; that was removed (see BUG 6).
 - **Pattern to follow for all future singleton clients that depend on env vars: always initialize lazily.**
 
 **BUG 3: `web-push.setVapidDetails()` at module load → crashes Next.js static build**
@@ -139,7 +139,7 @@ Key profile attributes:
 - Symptom: `No overload matches this call. Argument of type '...' is not assignable to parameter of type 'never'` on `.upsert()` calls through the proxy-wrapped client.
 - Root cause: TypeScript cannot infer generic types through a `Proxy`. `.from('table')` returns `never` instead of the correct query builder type.
 - Fix: removed Proxy entirely. Used plain `createClient(url, key)` for both clients. The lazy initialization was only needed when building without `.env.local`; once env vars are set, direct initialization works fine.
-- **Pattern: never wrap Supabase clients in a Proxy. TypeScript can't see through it.**
+- **Pattern: never wrap Supabase clients in a Proxy. TypeScript can't see through it.** Server code uses **`getSupabaseAdmin()`** from `lib/supabase-server.ts` only (no `supabaseAdmin` Proxy alias).
 
 **BUG 7: Wrong anon key written to .env.local (digit dropped in JWT)**
 - Symptom: page loads skeleton but never resolves — stuck in infinite loading state.
@@ -151,7 +151,7 @@ Key profile attributes:
 **BUG 8: Feed showed "No stories yet" even though filter stored rows**
 - Symptom: `GET /api/filter` returned `processed > 0` and `stored > 0`, but the homepage still rendered an empty feed.
 - Root cause: browser-side Supabase anon query on `scored_stories` returned 0 rows (policy/access mismatch), while service-role query returned dozens of rows. The UI depended on client-side access to data it could not read.
-- Fix: moved feed read path to a server API (`/api/stories`) backed by `supabaseAdmin`, then fetched from that endpoint in `app/page.tsx`.
+- Fix: moved feed read path to a server API (`/api/stories`) backed by `getSupabaseAdmin()`, then fetched from that endpoint in `app/page.tsx`.
 - **Pattern: if data is critical to first render, prefer a server-side read path over client anon queries unless RLS/policies are explicitly validated for that query.**
 
 **BUG 9: MCP global availability was missing despite project config**
@@ -229,6 +229,28 @@ VAPID_SUBJECT=mailto:you@example.com
 ```
 Generate VAPID keys once with: `npx web-push generate-vapid-keys`
 Template is in `.env.local.example` — copy and fill in.
+
+**Optional tuning (filter + pool):**
+```
+FILTER_RAW_FETCH_LIMIT=400     # cap 800 — raw_stories rows considered per filter run
+FILTER_MAX_CANDIDATES=36       # cap 200 — max unscored candidates scored per run
+FILTER_BATCH_SIZE=18           # cap 40 — Haiku batch size (clamped to max candidates)
+```
+
+## Hosted Supabase checklist (migrations)
+
+Apply new SQL migrations in the Supabase SQL editor (or `supabase db push`) when deploying:
+
+- `supabase/migrations/20260411120000_scrape_user_throttle.sql` — DB-backed **scrape** rate limit for signed-in users.
+- `supabase/migrations/20260411130000_filter_user_throttle.sql` — DB-backed **filter** rate limit (90s between runs per user, BYOK protection).
+- `supabase/migrations/20260411140000_api_scored_stories_page.sql` — keyset cursor pagination for `GET /api/stories` (`api_scored_stories_page` RPC).
+- `supabase/migrations/20260411150000_prune_signal_story_tables.sql` — `prune_signal_story_tables()` deletes `scored_stories` older than **7 days** and `raw_stories` older than **14 days** (run manually or schedule with **pg_cron**, e.g. weekly `SELECT public.prune_signal_story_tables();`).
+
+Until throttle **tables** are missing, scrape/filter rate limiters **log a warning** and allow the request (deploy order never bricks the app).
+
+## Feed API pagination
+
+`GET /api/stories` accepts `limit` (default 20, max 80) and optional `cursor` (base64url JSON of the last row’s `{ score, scored_at, id }` from the previous page). The handler fetches **limit + 1** rows internally so `hasMore` is accurate on the last page. Response includes `hasMore` and `nextCursor` (pass as `cursor` for the next page). The feed uses **Load more** with keyset pagination so inserts do not shift pages.
 
 ## Sub-Agents
 This project uses specialized Claude sub-agents defined in `.claude/agents/`:

@@ -1,13 +1,6 @@
 import { matchesSignalKeywords } from '../user-profile'
+import { REDDIT_BASE, type RedditSubDef } from '../scrape-sources'
 import type { RawStory } from './rss'
-
-const SUBREDDITS: { name: string; sort: string }[] = [
-  { name: 'ethereum', sort: 'top.json?t=day' },
-  { name: 'defi', sort: 'top.json?t=day' },
-  { name: 'MachineLearning', sort: 'top.json?t=day' },
-  { name: 'LocalLLaMA', sort: 'top.json?t=day' },
-  { name: 'cryptocurrency', sort: 'hot.json' },
-]
 
 interface RedditPost {
   data: {
@@ -20,9 +13,12 @@ interface RedditPost {
   }
 }
 
-export async function scrapeReddit(): Promise<RawStory[]> {
+export async function scrapeReddit(
+  subreddits: RedditSubDef[] = REDDIT_BASE,
+  matchesText: (text: string) => boolean = matchesSignalKeywords
+): Promise<RawStory[]> {
   const settled = await Promise.allSettled(
-    SUBREDDITS.map(async (sub): Promise<RawStory[]> => {
+    subreddits.map(async (sub): Promise<RawStory[]> => {
       const res = await fetch(`https://www.reddit.com/r/${sub.name}/${sub.sort}&limit=25`, {
         headers: {
           'User-Agent': 'Signal/1.0 (personal intelligence feed)',
@@ -43,10 +39,8 @@ export async function scrapeReddit(): Promise<RawStory[]> {
       for (const post of posts) {
         const { title, url, selftext, score, permalink, created_utc } = post.data
 
-        // Skip low-engagement posts
         if (score < 10) continue
 
-        // Use permalink as canonical URL for self-posts
         const canonicalUrl = url.startsWith('https://www.reddit.com')
           ? `https://www.reddit.com${permalink}`
           : url
@@ -55,7 +49,7 @@ export async function scrapeReddit(): Promise<RawStory[]> {
           ? selftext.slice(0, 2000)
           : `Reddit post from r/${sub.name} with ${score} upvotes.`
 
-        if (!matchesSignalKeywords(title + ' ' + raw_text)) continue
+        if (!matchesText(title + ' ' + raw_text)) continue
 
         stories.push({
           title: title.trim(),
@@ -78,7 +72,7 @@ export async function scrapeReddit(): Promise<RawStory[]> {
       return
     }
 
-    console.error(`[Reddit] Failed to fetch r/${SUBREDDITS[idx].name}:`, entry.reason)
+    console.error(`[Reddit] Failed to fetch r/${subreddits[idx]?.name}:`, entry.reason)
   })
 
   return results

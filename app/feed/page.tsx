@@ -10,9 +10,14 @@ import {
   PipelinePreferencesPanel,
   type PipelinePreferences,
 } from '@/components/PipelinePreferences'
-import { canSubmitPipelinePrefs } from '@/lib/pipeline-preferences'
+import {
+  canSubmitPipelinePrefs,
+  parseStoredLastPipelinePrefs,
+  stablePipelinePrefsKey,
+} from '@/lib/pipeline-preferences'
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
+const STORIES_PAGE_SIZE = 25
 
 const TERMINAL_LINES = [
   'watcher/rss          connected (12 sources)',
@@ -37,6 +42,11 @@ function filterRequestBody(prefs: PipelinePreferences) {
   })
 }
 
+async function readJsonError(res: Response, fallback: string): Promise<string> {
+  const j = (await res.json().catch(() => ({}))) as { error?: unknown }
+  return typeof j.error === 'string' ? j.error : fallback
+}
+
 export default function LiveFeedPage() {
   const [stories, setStories] = useState<Story[]>([])
   const [category, setCategory] = useState<Category>('all')
@@ -47,7 +57,24 @@ export default function LiveFeedPage() {
   const [pipeSteps, setPipeSteps] = useState(INITIAL_PIPE_STEPS)
   const [pipelinePrefs, setPipelinePrefs] = useState<PipelinePreferences>(DEFAULT_PIPELINE_PREFS)
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false)
+  const [resettingProgress, setResettingProgress] = useState(false)
+  const [hasMoreStories, setHasMoreStories] = useState(false)
+  const [storiesNextCursor, setStoriesNextCursor] = useState<string | null>(null)
+  const [loadingMoreStories, setLoadingMoreStories] = useState(false)
   const pipelineRunningRef = useRef(false)
+  /** Prefs from the last successful `/api/filter` (server also stores under `profile.last_pipeline_prefs`). */
+  const lastSuccessfulPipelinePrefsRef = useRef<PipelinePreferences | null>(null)
+
+  useEffect(() => {
+    void fetch('/api/onboarding', { credentials: 'include' }).then(async (r) => {
+      if (!r.ok) return
+      const j = (await r.json()) as { profile?: Record<string, unknown> }
+      const parsed = parseStoredLastPipelinePrefs(j.profile?.last_pipeline_prefs)
+      if (parsed) {
+        lastSuccessfulPipelinePrefsRef.current = parsed
+      }
+    })
+  }, [])
 
   useEffect(() => {
     void fetch('/api/settings/status', { credentials: 'include' }).then(async (r) => {
@@ -63,8 +90,17 @@ export default function LiveFeedPage() {
       return false
     }
 
-    const response = await fetch('/api/stories', { cache: 'no-store', credentials: 'include' })
-    const payload = await response.json()
+    const response = await fetch(`/api/stories?limit=${STORIES_PAGE_SIZE}`, {
+      cache: 'no-store',
+      credentials: 'include',
+    })
+    const payload = (await response.json()) as {
+      success?: boolean
+      stories?: Story[]
+      error?: string
+      hasMore?: boolean
+      nextCursor?: string | null
+    }
 
     if (!response.ok || !payload.success) {
       console.error('Failed to fetch stories:', payload.error ?? response.statusText)
@@ -73,16 +109,68 @@ export default function LiveFeedPage() {
     }
 
     setStories((payload.stories as Story[]) ?? [])
+    setHasMoreStories(Boolean(payload.hasMore))
+    setStoriesNextCursor(typeof payload.nextCursor === 'string' ? payload.nextCursor : null)
     setLastUpdated(new Date())
     setLoading(false)
     return true
   }, [])
+
+  const loadMoreStories = useCallback(async () => {
+    if (!hasMoreStories || !storiesNextCursor || loadingMoreStories || pipelineRunningRef.current) return
+    setLoadingMoreStories(true)
+    try {
+      const q = new URLSearchParams({
+        limit: String(STORIES_PAGE_SIZE),
+        cursor: storiesNextCursor,
+      })
+      const response = await fetch(`/api/stories?${q.toString()}`, {
+        cache: 'no-store',
+        credentials: 'include',
+      })
+      const payload = (await response.json()) as {
+        success?: boolean
+        stories?: Story[]
+        hasMore?: boolean
+        nextCursor?: string | null
+      }
+      if (!response.ok || !payload.success) return
+      const next = (payload.stories as Story[]) ?? []
+      setStories((prev) => [...prev, ...next])
+      setHasMoreStories(Boolean(payload.hasMore))
+      setStoriesNextCursor(typeof payload.nextCursor === 'string' ? payload.nextCursor : null)
+    } finally {
+      setLoadingMoreStories(false)
+    }
+  }, [storiesNextCursor, hasMoreStories, loadingMoreStories])
 
   const runPipeline = useCallback(async () => {
     if (!canSubmitPipelinePrefs(pipelinePrefs)) return
     if (!hasAnthropicKey) {
       setPipelineMessage('Add your Anthropic API key in Settings first.')
       return
+    }
+
+    const last = lastSuccessfulPipelinePrefsRef.current
+    const prefsChanged =
+      last !== null && stablePipelinePrefsKey(pipelinePrefs) !== stablePipelinePrefsKey(last)
+
+    if (prefsChanged) {
+      const proceed = window.confirm(
+        'Topic emphasis or focus calibration changed since your last successful scoring run. Re-score the shared story pool with your new settings? This clears your current Signal feed and uses more Anthropic tokens on the next run. Cancel to keep your existing feed without re-scoring.'
+      )
+      if (!proceed) {
+        return
+      }
+      setPipelineMessage('Clearing previous scores so new settings can apply…')
+      const resetRes = await fetch('/api/filter/reset-progress', {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!resetRes.ok) {
+        setPipelineMessage(await readJsonError(resetRes, 'Could not reset scoring progress'))
+        return
+      }
     }
 
     pipelineRunningRef.current = true
@@ -97,9 +185,16 @@ export default function LiveFeedPage() {
 
     try {
       mark(0, 'running')
-      setPipelineMessage('Step 1 of 3 — collecting from RSS, Reddit, and HN…')
-      const scrape = await fetch('/api/scrape', { credentials: 'include' })
-      if (!scrape.ok) throw new Error('Scrape failed')
+      setPipelineMessage('Step 1 of 3 — collecting from RSS, Reddit, and HN (sources widen by topic)…')
+      const scrape = await fetch('/api/scrape', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: filterRequestBody(pipelinePrefs),
+      })
+      if (!scrape.ok) {
+        throw new Error(await readJsonError(scrape, 'Scrape failed'))
+      }
       mark(0, 'done')
 
       mark(1, 'running')
@@ -110,9 +205,12 @@ export default function LiveFeedPage() {
         headers: { 'Content-Type': 'application/json' },
         body: filterRequestBody(pipelinePrefs),
       })
+      const filterPayload = (await filter.json().catch(() => ({}))) as {
+        error?: unknown
+        parseWarning?: string
+      }
       if (!filter.ok) {
-        const errBody = await filter.json().catch(() => ({}))
-        throw new Error(typeof errBody.error === 'string' ? errBody.error : 'Filter failed')
+        throw new Error(typeof filterPayload.error === 'string' ? filterPayload.error : 'Filter failed')
       }
       mark(1, 'done')
 
@@ -123,7 +221,17 @@ export default function LiveFeedPage() {
       if (!ok) throw new Error('Stories fetch failed')
       mark(2, 'done')
 
-      setPipelineMessage('Control room synced.')
+      setPipelineMessage(
+        typeof filterPayload.parseWarning === 'string'
+          ? `Control room synced. Note: ${filterPayload.parseWarning}`
+          : 'Control room synced.'
+      )
+
+      lastSuccessfulPipelinePrefsRef.current = {
+        topicMode: pipelinePrefs.topicMode,
+        topicCustom: pipelinePrefs.topicMode === 'other' ? pipelinePrefs.topicCustom : '',
+        scope: pipelinePrefs.scope,
+      }
     } catch (err) {
       console.error(err)
       setPipelineMessage(
@@ -141,6 +249,32 @@ export default function LiveFeedPage() {
       setRunningPipeline(false)
     }
   }, [fetchStories, pipelinePrefs, hasAnthropicKey])
+
+  const resetScoringProgress = useCallback(async () => {
+    if (!hasAnthropicKey || runningPipeline || resettingProgress) return
+    if (
+      !window.confirm(
+        'Clear your scoring progress? Your feed will empty until you run the pipeline again; the next run will re-score shared stories with your current topic and scope settings.'
+      )
+    ) {
+      return
+    }
+    setResettingProgress(true)
+    setPipelineMessage('Clearing scoring progress…')
+    try {
+      const res = await fetch('/api/filter/reset-progress', { method: 'POST', credentials: 'include' })
+      if (!res.ok) {
+        const msg = await readJsonError(res, 'Could not reset progress')
+        setPipelineMessage(msg)
+        return
+      }
+      setStories([])
+      setPipelineMessage('Scoring progress cleared. Run pipeline to re-score with your preferences.')
+      void fetchStories()
+    } finally {
+      setResettingProgress(false)
+    }
+  }, [hasAnthropicKey, runningPipeline, resettingProgress, fetchStories])
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -176,8 +310,8 @@ export default function LiveFeedPage() {
   return (
     <main className="signal-wrdlss-shell signal-hero-bg">
       <div className="mx-auto w-full max-w-6xl px-5 pb-24 pt-5 md:px-8">
-        <header className="sticky top-5 z-20 mb-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-black/15 bg-white/60 px-5 py-3 text-black backdrop-blur-md">
-          <Link href="/" className="text-2xl font-semibold tracking-tight">
+        <header className="sticky top-5 z-20 mb-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/45 px-5 py-3 text-zinc-100 backdrop-blur-xl">
+          <Link href="/" className="text-2xl font-semibold tracking-tight text-white">
             Signal
           </Link>
           <div className="flex flex-wrap items-center gap-3">
@@ -191,19 +325,19 @@ export default function LiveFeedPage() {
                     ? 'Add a custom topic or choose a preset'
                     : undefined
               }
-              className="rounded-full border border-black/20 bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-full border border-white/20 bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {runningPipeline ? 'Running...' : 'Run Pipeline'}
             </button>
             <button
               onClick={() => void fetchStories()}
-              className="rounded-full border border-black/20 bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-black/5"
+              className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/10"
             >
               Refresh Feed
             </button>
             <Link
               href="/settings"
-              className="rounded-full border border-black/20 px-4 py-2 text-sm font-medium text-black transition hover:bg-black/5"
+              className="rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/10"
             >
               Settings
             </Link>
@@ -211,15 +345,16 @@ export default function LiveFeedPage() {
         </header>
 
         <section className="grid gap-6 md:grid-cols-[1.2fr_0.8fr] md:items-start">
-          <div className="signal-section rounded-3xl border border-black/10 bg-white/82 p-7 text-black backdrop-blur-md">
-            <p className="mb-4 font-mono text-xs uppercase tracking-[0.2em] text-black/65">
+          <div className="signal-section rounded-3xl border border-white/10 bg-black/50 p-7 text-zinc-100 backdrop-blur-md">
+            <p className="mb-4 font-mono text-xs uppercase tracking-[0.2em] text-zinc-500">
               Live Feed Control Room
             </p>
-            <h1 className="font-serif text-5xl leading-[0.95] md:text-6xl">
+            <h1 className="font-serif text-5xl leading-[0.95] text-zinc-50 md:text-6xl">
               Real-time signal stream
             </h1>
-            <p className="mt-4 max-w-xl text-lg text-black/70">
-              Monitoring scrapers, filter pipeline, and opportunity alerts in one place.
+            <p className="mt-4 max-w-xl text-lg text-zinc-400">
+              Monitoring RSS, Reddit, and Hacker News through the filter pipeline and opportunity alerts in one
+              place.
             </p>
 
             <div className="mt-6">
@@ -228,12 +363,26 @@ export default function LiveFeedPage() {
                 onChange={setPipelinePrefs}
                 disabled={runningPipeline}
               />
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => void resetScoringProgress()}
+                  disabled={runningPipeline || resettingProgress || !hasAnthropicKey}
+                  className="rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {resettingProgress ? 'Resetting…' : 'Reset scoring progress'}
+                </button>
+                <p className="mt-1.5 text-[11px] text-zinc-500">
+                  Clears your feed and scoring marks so the next run re-scores the pool. Usually unnecessary —
+                  Run Pipeline already prompts when topic or scope changed.
+                </p>
+              </div>
             </div>
 
             {!hasAnthropicKey && (
-              <p className="mt-4 rounded-xl border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <p className="mt-4 rounded-xl border border-amber-400/35 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
                 Add your Anthropic API key in{' '}
-                <Link href="/settings" className="font-medium underline underline-offset-2">
+                <Link href="/settings" className="font-medium text-white underline underline-offset-2">
                   Settings
                 </Link>{' '}
                 to run the scoring pipeline (BYOK — your key, your usage).
@@ -241,7 +390,7 @@ export default function LiveFeedPage() {
             )}
 
             <div className="mt-4">
-              <p className="font-mono text-xs leading-snug text-black/60">{pipelineMessage}</p>
+              <p className="font-mono text-xs leading-snug text-zinc-400">{pipelineMessage}</p>
               {showPipelineDetail && (
                 <div className="mt-2">
                   <PipelineProgress steps={pipeSteps} />
@@ -263,15 +412,15 @@ export default function LiveFeedPage() {
             </div>
           </div>
 
-          <div className="signal-section rounded-3xl border border-black/10 bg-white/82 p-7 text-black backdrop-blur-md">
+          <div className="signal-section rounded-3xl border border-white/10 bg-black/50 p-7 text-zinc-100 backdrop-blur-md">
             <div className="space-y-3">
-              <div className="rounded-xl border border-black/15 bg-white/75 p-4">
-                <p className="text-sm text-black/65">Stories loaded</p>
-                <p className="mt-1 text-2xl font-semibold text-black">{stories.length}</p>
+              <div className="rounded-xl border border-white/10 bg-black/40 p-4">
+                <p className="text-sm text-zinc-500">Stories loaded</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-50">{stories.length}</p>
               </div>
-              <div className="rounded-xl border border-black/15 bg-white/75 p-4">
-                <p className="text-sm text-black/65">Last update</p>
-                <p className="mt-1 text-lg font-semibold text-black">
+              <div className="rounded-xl border border-white/10 bg-black/40 p-4">
+                <p className="text-sm text-zinc-500">Last update</p>
+                <p className="mt-1 text-lg font-semibold text-zinc-50">
                   {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Loading...'}
                 </p>
               </div>
@@ -281,7 +430,7 @@ export default function LiveFeedPage() {
 
         {showFeedSection ? (
           <>
-            <section className="signal-section mt-8 rounded-3xl border border-black/10 bg-white/82 p-4 md:p-6">
+            <section className="signal-section mt-8 rounded-3xl border border-white/10 bg-black/50 p-4 backdrop-blur-md md:p-6">
               <CategoryFilter active={category} onChange={setCategory} counts={counts} />
             </section>
 
@@ -291,33 +440,49 @@ export default function LiveFeedPage() {
                   {[...Array(6)].map((_, i) => (
                     <div
                       key={i}
-                      className="h-32 animate-pulse rounded-2xl border border-black/15 bg-white/65"
+                      className="h-32 animate-pulse rounded-2xl border border-white/10 bg-zinc-950/35"
                     />
                   ))}
                 </div>
               ) : filtered.length === 0 ? (
-                <div className="rounded-2xl border border-black/15 bg-white/80 py-16 text-center text-black/70">
+                <div className="rounded-2xl border border-white/10 bg-black/55 py-16 text-center text-zinc-400 backdrop-blur-md">
                   <p className="mb-3 text-4xl">📡</p>
-                  <p className="font-medium text-black">No stories yet</p>
-                  <p className="mt-1 text-sm">Run pipeline to populate the live feed.</p>
+                  <p className="font-medium text-zinc-100">No stories yet</p>
+                  <p className="mt-1 text-sm text-zinc-500">Run pipeline to populate the live feed.</p>
                   <button
                     onClick={runPipeline}
                     disabled={runningPipeline || !canRun}
-                    className="mt-5 rounded-lg border border-black/20 bg-black px-4 py-2 text-sm text-white transition hover:bg-black/85 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-5 rounded-lg border border-white/20 bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {runningPipeline ? 'Running...' : 'Run now'}
                   </button>
                 </div>
               ) : (
-                filtered.map((story) => <FeedCard key={story.id} story={story} />)
+                <>
+                  {filtered.map((story) => (
+                    <FeedCard key={story.id} story={story} />
+                  ))}
+                  {hasMoreStories && filtered.length > 0 ? (
+                    <div className="flex justify-center pt-6">
+                      <button
+                        type="button"
+                        onClick={() => void loadMoreStories()}
+                        disabled={loadingMoreStories}
+                        className="rounded-full border border-white/15 bg-white/10 px-5 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {loadingMoreStories ? 'Loading…' : 'Load more stories'}
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </section>
           </>
         ) : (
-          <section className="signal-section mt-8 rounded-3xl border border-black/10 bg-white/82 p-10 text-center text-black/70">
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-black/50">Pipeline active</p>
-            <p className="mt-3 text-lg font-medium text-black">Refreshing your feed…</p>
-            <p className="mt-2 max-w-md mx-auto text-sm">
+          <section className="signal-section mt-8 rounded-3xl border border-white/10 bg-black/50 p-10 text-center text-zinc-400 backdrop-blur-md">
+            <p className="font-mono text-xs uppercase tracking-[0.2em] text-zinc-500">Pipeline active</p>
+            <p className="mt-3 text-lg font-medium text-zinc-100">Refreshing your feed…</p>
+            <p className="mt-2 mx-auto max-w-md text-sm text-zinc-500">
               Stories stay hidden until collection, scoring, and reload finish so you don’t see stale cards
               mixed with a run in progress.
             </p>

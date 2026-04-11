@@ -4,6 +4,7 @@ import { memo, useState } from 'react'
 
 export interface Story {
   id: string
+  raw_story_id?: string | null
   title: string
   url: string
   source: string
@@ -14,36 +15,37 @@ export interface Story {
   published_at: string | null
   scored_at: string
   seen: boolean
+  notified?: boolean
 }
 
 const CATEGORY_STYLES = {
   opportunity: {
     label: 'Opportunity',
-    badge: 'bg-black/5 text-black/80 border-black/20',
+    badge: 'border-white/15 bg-white/5 text-zinc-200',
   },
   idea: {
     label: 'Idea',
-    badge: 'bg-black/5 text-black/80 border-black/20',
+    badge: 'border-white/15 bg-white/5 text-zinc-200',
   },
   intel: {
     label: 'Intel',
-    badge: 'bg-black/5 text-black/80 border-black/20',
+    badge: 'border-white/15 bg-white/5 text-zinc-200',
   },
 }
 
 function ScoreBadge({ score }: { score: number }) {
   const color =
     score >= 9
-      ? 'bg-black text-white'
+      ? 'bg-white text-black'
       : score >= 7
-      ? 'bg-black/85 text-white'
-      : 'bg-black/70 text-white'
+        ? 'bg-zinc-200 text-black'
+        : 'bg-zinc-400 text-black'
 
   const pulse = score >= 9 ? 'animate-pulse' : ''
 
   return (
     <span
-      className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${color} ${pulse}`}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${color} ${pulse}`}
     >
       {score}
     </span>
@@ -65,54 +67,45 @@ export const FeedCard = memo(function FeedCard({ story }: { story: Story }) {
   const cat = CATEGORY_STYLES[story.category]
 
   return (
-    <article className="rounded-xl border border-black/15 bg-white/82 p-5 text-black transition-colors hover:border-black/30">
+    <article className="rounded-xl border border-white/10 bg-black/50 p-5 text-zinc-100 backdrop-blur-md transition-colors hover:border-white/20">
       <div className="flex items-start gap-4">
-        {/* Score badge */}
         <div className="flex-shrink-0 pt-0.5">
           <ScoreBadge score={story.score} />
         </div>
 
-        <div className="flex-1 min-w-0">
-          {/* Category + source + time */}
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span
-              className={`text-xs font-medium px-2 py-0.5 rounded-full border ${cat.badge}`}
-            >
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${cat.badge}`}>
               {cat.label}
             </span>
-            <span className="font-mono text-xs text-black/55">{story.source}</span>
-            <span className="font-mono text-xs text-black/45">
+            <span className="font-mono text-xs text-zinc-400">{story.source}</span>
+            <span className="font-mono text-xs text-zinc-500">
               {timeAgo(story.published_at ?? story.scored_at)}
             </span>
           </div>
 
-          {/* Title */}
-          <h2 className="mb-2 font-medium leading-snug text-black">
+          <h2 className="mb-2 font-medium leading-snug text-zinc-50">
             <a
               href={story.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="transition hover:underline"
+              className="transition hover:text-white hover:underline"
             >
               {story.title}
             </a>
           </h2>
 
-          {/* Summary */}
-          <p className="mb-3 text-sm leading-relaxed text-black/70">
-            {story.summary}
-          </p>
+          <p className="mb-3 text-sm leading-relaxed text-zinc-400">{story.summary}</p>
 
-          {/* Expand/collapse why it matters */}
           <button
             onClick={() => setExpanded((v) => !v)}
-            className="text-xs text-black/55 transition-colors hover:text-black"
+            className="text-xs text-zinc-500 transition-colors hover:text-zinc-200"
           >
             {expanded ? '▲ Hide reasoning' : '▼ Why it matters'}
           </button>
 
           {expanded && (
-            <p className="mt-2 rounded-lg border border-black/15 bg-black/[0.03] p-3 text-xs leading-relaxed text-black/70">
+            <p className="mt-2 rounded-lg border border-white/10 bg-black/30 p-3 text-xs leading-relaxed text-zinc-400">
               {story.why}
             </p>
           )}

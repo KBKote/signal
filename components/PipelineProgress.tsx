@@ -9,11 +9,11 @@ interface Props {
 export function PipelineProgress({ steps }: Props) {
   return (
     <div
-      className="rounded-xl border border-black/10 bg-black/[0.03] px-3 py-2.5 font-mono text-[11px] leading-relaxed text-black/80"
+      className="rounded-xl border border-white/10 bg-black/45 px-3 py-2.5 font-mono text-[11px] leading-relaxed text-zinc-300"
       role="status"
       aria-live="polite"
     >
-      <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-black/50">Pipeline status</p>
+      <p className="mb-1.5 text-[10px] uppercase tracking-[0.18em] text-zinc-500">Pipeline status</p>
       <ul className="space-y-1">
         {steps.map((step, i) => (
           <li key={i} className="flex items-start gap-2">
@@ -29,12 +29,12 @@ export function PipelineProgress({ steps }: Props) {
             <span
               className={
                 step.state === 'running'
-                  ? 'font-medium text-black animate-pulse'
+                  ? 'animate-pulse font-medium text-zinc-100'
                   : step.state === 'done'
-                    ? 'text-black/60'
+                    ? 'text-zinc-500'
                     : step.state === 'error'
-                      ? 'text-red-600'
-                      : 'text-black/45'
+                      ? 'text-red-400'
+                      : 'text-zinc-600'
               }
             >
               {step.label}

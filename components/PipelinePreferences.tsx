@@ -18,7 +18,6 @@ interface Props {
   value: PipelinePreferences
   onChange: (next: PipelinePreferences) => void
   disabled?: boolean
-  /** Short note under the title */
   hint?: string
 }
 
@@ -36,18 +35,25 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
   }
 
   return (
-    <div className="rounded-2xl border border-black/12 bg-black/[0.02] p-4 text-black md:p-5">
-      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-black/50">
-        Pipeline preferences
+    <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-zinc-100 md:p-5">
+      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">Pipeline preferences</p>
+      <p className="mt-1 text-sm text-zinc-400">
+        Applied when scoring with Claude Haiku over stories from{' '}
+        <span className="font-medium text-zinc-200">RSS feeds, Reddit, and Hacker News</span> — not Twitter/X or
+        arbitrary web search. Topic emphasis also widens which outlets and subreddits we pull from (e.g. macro adds
+        business finance RSS and investing subs). Custom text adds a Google News RSS slice plus keyword matching for
+        your terms.
       </p>
-      <p className="mt-1 text-sm text-black/65">
-        Applied when scoring with Claude Haiku. Scrape sources are unchanged.
+      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+        When you click <span className="font-medium text-zinc-300">Run Pipeline</span>, if topic or focus calibration
+        changed since your last successful run, Signal will ask to clear your scoring progress and re-score the shared
+        pool (same effect as &quot;Reset scoring progress&quot;). Unchanged settings skip that step.
       </p>
-      {hint ? <p className="mt-1 text-xs text-black/50">{hint}</p> : null}
+      {hint ? <p className="mt-1 text-xs text-zinc-500">{hint}</p> : null}
 
       <div className="mt-4 space-y-4">
         <div>
-          <label htmlFor="signal-topic-mode" className="block font-mono text-xs text-black/55">
+          <label htmlFor="signal-topic-mode" className="block font-mono text-xs text-zinc-400">
             Topic emphasis
           </label>
           <select
@@ -55,10 +61,10 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
             disabled={disabled}
             value={value.topicMode}
             onChange={(e) => setTopicMode(e.target.value as TopicMode)}
-            className="mt-1.5 w-full max-w-md rounded-lg border border-black/15 bg-white px-3 py-2 text-sm text-black outline-none transition focus:border-black/35 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-1.5 w-full max-w-md rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {TOPIC_MODES.map((m) => (
-              <option key={m} value={m}>
+              <option key={m} value={m} className="bg-zinc-950">
                 {TOPIC_MODE_LABELS[m]}
               </option>
             ))}
@@ -67,7 +73,7 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
 
         {value.topicMode === 'other' ? (
           <div>
-            <label htmlFor="signal-topic-custom" className="block font-mono text-xs text-black/55">
+            <label htmlFor="signal-topic-custom" className="block font-mono text-xs text-zinc-400">
               Custom focus (max {TOPIC_CUSTOM_MAX_LEN} chars)
             </label>
             <textarea
@@ -82,17 +88,17 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
               }
               rows={3}
               placeholder="e.g. restaking, ZK coprocessors, AI coding agents for Solidity"
-              className="mt-1.5 w-full max-w-lg resize-y rounded-lg border border-black/15 bg-white px-3 py-2 text-sm text-black outline-none transition placeholder:text-black/35 focus:border-black/35 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-1.5 w-full max-w-lg resize-y rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-white/30 disabled:cursor-not-allowed disabled:opacity-60"
             />
-            <p className="mt-1 text-xs text-black/45">
+            <p className="mt-1 text-xs text-zinc-500">
               {value.topicCustom.length}/{TOPIC_CUSTOM_MAX_LEN}
             </p>
           </div>
         ) : null}
 
         <div>
-          <span className="block font-mono text-xs text-black/55">Focus calibration</span>
-          <p className="mt-0.5 text-xs text-black/45">
+          <span className="block font-mono text-xs text-zinc-400">Focus calibration</span>
+          <p className="mt-0.5 text-xs text-zinc-500">
             Strict relevance versus a broader lens for adjacent or early signals.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -104,8 +110,8 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
                 onClick={() => setScope(s)}
                 className={`rounded-lg border px-3 py-2 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                   value.scope === s
-                    ? 'border-black/40 bg-black text-white'
-                    : 'border-black/15 bg-white text-black hover:border-black/25'
+                    ? 'border-white/30 bg-white text-black'
+                    : 'border-white/10 bg-zinc-950/90 text-zinc-200 hover:border-white/20'
                 }`}
               >
                 {SCOPE_LABELS[s]}

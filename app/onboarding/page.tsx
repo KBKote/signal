@@ -61,23 +61,23 @@ export default function OnboardingPage() {
   if (loading) {
     return (
       <main className="signal-wrdlss-shell signal-hero-bg flex min-h-full items-center justify-center px-5 py-16">
-        <p className="text-sm text-black/50">Loading…</p>
+        <p className="text-sm text-zinc-500">Loading…</p>
       </main>
     )
   }
 
   return (
     <main className="signal-wrdlss-shell signal-hero-bg px-5 py-12 md:py-16">
-      <div className="mx-auto max-w-lg rounded-3xl border border-black/10 bg-white/90 p-8 text-black shadow-sm backdrop-blur-md">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-black/50">Onboarding</p>
-        <h1 className="mt-2 font-serif text-3xl tracking-tight">Tailor your signal</h1>
-        <p className="mt-2 text-sm text-black/65">
+      <div className="mx-auto max-w-lg rounded-3xl border border-white/10 bg-black/70 p-8 text-zinc-100 shadow-xl backdrop-blur-xl">
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">Onboarding</p>
+        <h1 className="mt-2 font-serif text-3xl tracking-tight text-zinc-50">Tailor your signal</h1>
+        <p className="mt-2 text-sm text-zinc-400">
           Answers shape how Claude Haiku scores stories for you. You can change them later in settings.
         </p>
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
           <div>
-            <label className="block font-mono text-xs text-black/55" htmlFor="bg">
+            <label className="block font-mono text-xs text-zinc-400" htmlFor="bg">
               Background
             </label>
             <textarea
@@ -86,12 +86,12 @@ export default function OnboardingPage() {
               rows={3}
               value={background}
               onChange={(e) => setBackground(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 text-sm outline-none focus:border-black/35"
+              className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
               placeholder="What you’re working on, time zone, focus areas…"
             />
           </div>
           <div>
-            <label className="block font-mono text-xs text-black/55" htmlFor="goals">
+            <label className="block font-mono text-xs text-zinc-400" htmlFor="goals">
               Goals
             </label>
             <textarea
@@ -100,12 +100,12 @@ export default function OnboardingPage() {
               rows={3}
               value={goals}
               onChange={(e) => setGoals(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 text-sm outline-none focus:border-black/35"
+              className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
               placeholder="Opportunities, learning, projects, career…"
             />
           </div>
           <div>
-            <label className="block font-mono text-xs text-black/55" htmlFor="avoid">
+            <label className="block font-mono text-xs text-zinc-400" htmlFor="avoid">
               Deprioritize
             </label>
             <textarea
@@ -113,12 +113,12 @@ export default function OnboardingPage() {
               rows={2}
               value={avoid}
               onChange={(e) => setAvoid(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 text-sm outline-none focus:border-black/35"
+              className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
               placeholder="Noise you want scored lower (optional)"
             />
           </div>
           <div>
-            <label className="block font-mono text-xs text-black/55" htmlFor="exp">
+            <label className="block font-mono text-xs text-zinc-400" htmlFor="exp">
               Experience level
             </label>
             <select
@@ -126,10 +126,10 @@ export default function OnboardingPage() {
               required
               value={experience}
               onChange={(e) => setExperience(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-sm outline-none focus:border-black/35"
+              className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-white/35"
             >
               {EXPERIENCE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} className="bg-zinc-950">
                   {o.label}
                 </option>
               ))}
@@ -138,14 +138,14 @@ export default function OnboardingPage() {
           <button
             type="submit"
             disabled={saving}
-            className="w-full rounded-xl border border-black/20 bg-black py-2.5 text-sm font-medium text-white transition hover:bg-black/85 disabled:opacity-60"
+            className="w-full rounded-xl border border-white/20 bg-white py-2.5 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:opacity-60"
           >
             {saving ? 'Saving…' : 'Save and continue'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-xs text-black/45">
-          <Link href="/feed" className="underline hover:text-black">
+        <p className="mt-6 text-center text-xs text-zinc-500">
+          <Link href="/feed" className="underline decoration-white/25 hover:text-zinc-200">
             Skip and open feed
           </Link>
         </p>

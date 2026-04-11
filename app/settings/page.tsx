@@ -65,38 +65,38 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <main className="signal-wrdlss-shell signal-hero-bg flex min-h-full items-center justify-center px-5 py-16">
-        <p className="text-sm text-black/50">Loading…</p>
+        <p className="text-sm text-zinc-500">Loading…</p>
       </main>
     )
   }
 
   return (
     <main className="signal-wrdlss-shell signal-hero-bg px-5 py-12 md:py-16">
-      <div className="mx-auto max-w-lg rounded-3xl border border-black/10 bg-white/90 p-8 text-black shadow-sm backdrop-blur-md">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-black/50">Settings</p>
-        <h1 className="mt-2 font-serif text-3xl tracking-tight">Anthropic API key</h1>
-        <p className="mt-2 text-sm text-black/65">
+      <div className="mx-auto max-w-lg rounded-3xl border border-white/10 bg-black/70 p-8 text-zinc-100 shadow-xl backdrop-blur-xl">
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">Settings</p>
+        <h1 className="mt-2 font-serif text-3xl tracking-tight text-zinc-50">Anthropic API key</h1>
+        <p className="mt-2 text-sm text-zinc-400">
           Bring your own key (BYOK). It is encrypted before storage and only decrypted on the server when
           you run the scoring step.{' '}
           <a
             href="https://console.anthropic.com/"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline hover:text-black"
+            className="text-white underline hover:text-zinc-200"
           >
             Get a key
           </a>
         </p>
 
         {hasKey ? (
-          <p className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-900">
+          <p className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-950/50 px-3 py-2 text-sm text-emerald-200">
             A key is on file. Paste a new one below to replace it.
           </p>
         ) : null}
 
         <form onSubmit={saveKey} className="mt-6 space-y-4">
           <div>
-            <label htmlFor="key" className="block font-mono text-xs text-black/55">
+            <label htmlFor="key" className="block font-mono text-xs text-zinc-400">
               API key
             </label>
             <input
@@ -105,14 +105,14 @@ export default function SettingsPage() {
               autoComplete="off"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              className="mt-1.5 w-full rounded-lg border border-black/15 px-3 py-2 font-mono text-sm outline-none focus:border-black/35"
+              className="mt-1.5 w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-white/35"
               placeholder="sk-ant-api03-…"
             />
           </div>
           <button
             type="submit"
             disabled={saving || !apiKey.trim()}
-            className="w-full rounded-xl border border-black/20 bg-black py-2.5 text-sm font-medium text-white transition hover:bg-black/85 disabled:opacity-60"
+            className="w-full rounded-xl border border-white/20 bg-white py-2.5 text-sm font-medium text-black transition hover:bg-zinc-200 disabled:opacity-60"
           >
             {saving ? 'Saving…' : hasKey ? 'Replace key' : 'Save key'}
           </button>
@@ -122,21 +122,21 @@ export default function SettingsPage() {
           <button
             type="button"
             onClick={() => void removeKey()}
-            className="mt-3 w-full rounded-xl border border-black/15 py-2 text-sm text-black/70 transition hover:bg-black/5"
+            className="mt-3 w-full rounded-xl border border-white/15 py-2 text-sm text-zinc-400 transition hover:bg-white/5 hover:text-zinc-200"
           >
             Remove key
           </button>
         ) : null}
 
-        {message ? <p className="mt-4 text-sm text-black/70">{message}</p> : null}
+        {message ? <p className="mt-4 text-sm text-zinc-400">{message}</p> : null}
 
         <div className="mt-8 flex flex-wrap items-center gap-3 text-sm">
-          <Link href="/feed" className="font-medium text-black underline hover:no-underline">
+          <Link href="/feed" className="font-medium text-white underline hover:text-zinc-200">
             Open live feed
           </Link>
           <button
             type="button"
-            className="ml-auto text-black/45 hover:text-black"
+            className="ml-auto text-zinc-500 hover:text-zinc-200"
             onClick={() => {
               void createSupabaseBrowserClient().auth.signOut().then(() => router.replace('/'))
             }}

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
-import { supabaseAdmin } from '@/lib/supabase-server'
+import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export async function POST(req: Request) {
   const user = await getSessionUser()
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid subscription object' }, { status: 400 })
     }
 
-    const { error } = await supabaseAdmin.from('push_subscriptions').upsert(
+    const { error } = await getSupabaseAdmin().from('push_subscriptions').upsert(
       {
         user_id: user.id,
         endpoint,

@@ -30,7 +30,7 @@ export function AuthContinueClient({ redirectParam }: { redirectParam: string | 
 
   return (
     <main className="signal-wrdlss-shell signal-hero-bg flex min-h-full items-center justify-center px-5 py-16">
-      <p className="text-sm text-black/60">{message}</p>
+      <p className="text-sm text-zinc-400">{message}</p>
     </main>
   )
 }

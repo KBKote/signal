@@ -86,12 +86,12 @@ export function NotificationBell() {
           ? 'Disable push notifications'
           : 'Enable push notifications for score 9+ opportunities'
       }
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm border transition-colors ${
+      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
         isGranted
-          ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
+          ? 'border-red-500/35 bg-red-950/40 text-red-300 hover:bg-red-950/60'
           : permission === 'denied'
-          ? 'bg-slate-800 border-slate-700 text-slate-600 cursor-not-allowed'
-          : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+            ? 'cursor-not-allowed border-white/10 bg-zinc-950 text-zinc-600'
+            : 'border-white/15 bg-zinc-950 text-zinc-400 hover:border-white/25 hover:text-zinc-200'
       }`}
     >
       <span>{isGranted ? '🔔' : '🔕'}</span>

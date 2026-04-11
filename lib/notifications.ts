@@ -1,11 +1,14 @@
 import webpush from 'web-push'
-import { supabaseAdmin } from './supabase-server'
+import { getSupabaseAdmin } from './supabase-server'
 
 function configureWebPush() {
+  const pub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? ''
+  const priv = process.env.VAPID_PRIVATE_KEY ?? ''
+  if (!pub || !priv) return
   webpush.setVapidDetails(
     process.env.VAPID_SUBJECT ?? 'mailto:admin@signal.app',
-    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '',
-    process.env.VAPID_PRIVATE_KEY ?? ''
+    pub,
+    priv
   )
 }
 
@@ -32,9 +35,13 @@ interface ScoredStory {
  */
 export async function sendNotificationsForNewStories(userId: string): Promise<number> {
   configureWebPush()
+  if (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() || !process.env.VAPID_PRIVATE_KEY?.trim()) {
+    return 0
+  }
   const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString()
+  const db = getSupabaseAdmin()
 
-  const { data: stories, error: storiesError } = await supabaseAdmin
+  const { data: stories, error: storiesError } = await db
     .from('scored_stories')
     .select('id, title, url, score, category, why, scored_at')
     .eq('user_id', userId)
@@ -45,7 +52,7 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
 
   if (storiesError || !stories || stories.length === 0) return 0
 
-  const { data: subs, error: subsError } = await supabaseAdmin
+  const { data: subs, error: subsError } = await db
     .from('push_subscriptions')
     .select('endpoint, p256dh, auth')
     .eq('user_id', userId)
@@ -62,6 +69,7 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
     })
 
     const failedEndpoints: string[] = []
+    let anyDeliveryOk = false
 
     for (const sub of subs) {
       const pushSub: PushSubscription = {
@@ -72,6 +80,7 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
       try {
         await webpush.sendNotification(pushSub, payload)
         sent++
+        anyDeliveryOk = true
       } catch (err: unknown) {
         const statusCode = (err as { statusCode?: number }).statusCode
         if (statusCode === 410 || statusCode === 404) {
@@ -80,10 +89,12 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
       }
     }
 
-    await supabaseAdmin.from('scored_stories').update({ notified: true }).eq('id', story.id)
+    if (anyDeliveryOk) {
+      await db.from('scored_stories').update({ notified: true }).eq('id', story.id)
+    }
 
     if (failedEndpoints.length > 0) {
-      await supabaseAdmin
+      await db
         .from('push_subscriptions')
         .delete()
         .eq('user_id', userId)

@@ -1,7 +1,7 @@
+import { HN_QUERY_DEFAULT } from '../scrape-sources'
 import { matchesSignalKeywords } from '../user-profile'
 import type { RawStory } from './rss'
 
-const HN_QUERY = 'AI OR "machine learning" OR ethereum OR crypto OR DeFi OR LLM OR "language model"'
 const MIN_POINTS = 50
 
 interface HNHit {
@@ -13,21 +13,23 @@ interface HNHit {
   created_at: string
 }
 
-export async function scrapeHackerNews(): Promise<RawStory[]> {
+export async function scrapeHackerNews(
+  query: string = HN_QUERY_DEFAULT,
+  matchesText: (text: string) => boolean = matchesSignalKeywords
+): Promise<RawStory[]> {
   const results: RawStory[] = []
 
   try {
     const params = new URLSearchParams({
-      query: HN_QUERY,
+      query,
       tags: 'story',
       numericFilters: `points>=${MIN_POINTS}`,
       hitsPerPage: '30',
     })
 
-    const res = await fetch(
-      `https://hn.algolia.com/api/v1/search_by_date?${params}`,
-      { next: { revalidate: 0 } }
-    )
+    const res = await fetch(`https://hn.algolia.com/api/v1/search_by_date?${params}`, {
+      next: { revalidate: 0 },
+    })
 
     if (!res.ok) {
       console.error(`[HN] Algolia API returned ${res.status}`)
@@ -39,7 +41,6 @@ export async function scrapeHackerNews(): Promise<RawStory[]> {
 
     for (const hit of hits) {
       const title = hit.title?.trim() ?? ''
-      // HN stories without an external URL link back to the HN item
       const url = hit.url ?? `https://news.ycombinator.com/item?id=${hit.objectID}`
 
       if (!title) continue
@@ -48,7 +49,7 @@ export async function scrapeHackerNews(): Promise<RawStory[]> {
         ? hit.story_text.replace(/<[^>]*>/g, ' ').slice(0, 2000)
         : `Hacker News story with ${hit.points} points.`
 
-      if (!matchesSignalKeywords(title + ' ' + raw_text)) continue
+      if (!matchesText(title + ' ' + raw_text)) continue
 
       results.push({
         title,
