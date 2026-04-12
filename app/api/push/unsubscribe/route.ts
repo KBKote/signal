@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export async function POST(req: Request) {
@@ -7,6 +8,9 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const ready = await assertUserReadyForPipeline(user)
+  if (!ready.ok) return ready.response
 
   try {
     const { endpoint } = await req.json()

@@ -1,19 +1,17 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { takeFilterRateSlotDb } from '@/lib/filter-rate-limit'
 import { runFilterPipeline } from '@/lib/filter'
-import {
-  parsePipelinePreferencesBody,
-  DEFAULT_PIPELINE_PREFS,
-} from '@/lib/pipeline-preferences'
+import { parseFilterRequestPayload, DEFAULT_PIPELINE_PREFS } from '@/lib/pipeline-preferences'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
-import { getDecryptedAnthropicKey } from '@/lib/user-credentials'
 import { buildScoringUserPrompt } from '@/lib/user-profile-prompt'
 import { loadUserProfileRow } from '@/lib/user-profiles-db'
 import { sendNotificationsForNewStories } from '@/lib/notifications'
 
 /** Vercel: raise on paid plans if filter still hits limits; local dev is uncapped. */
-export const maxDuration = 120
+/** Large maxCandidates + small batchSize can mean many sequential Haiku calls. */
+export const maxDuration = 300
 
 export async function POST(request: Request) {
   const user = await getSessionUser()
@@ -21,13 +19,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const apiKey = await getDecryptedAnthropicKey(user.id)
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: 'Add your Anthropic API key in Settings' },
-      { status: 400 }
-    )
-  }
+  const ready = await assertUserReadyForPipeline(user)
+  if (!ready.ok) return ready.response
+  const apiKey = ready.anthropicApiKey
 
   const rateMsg = await takeFilterRateSlotDb(user.id)
   if (rateMsg) {
@@ -35,22 +29,33 @@ export async function POST(request: Request) {
   }
 
   let prefs = DEFAULT_PIPELINE_PREFS
+  let maxCandidates: number | undefined
+  let batchSize: number | undefined
   try {
     const ct = request.headers.get('content-type') ?? ''
     if (ct.includes('application/json')) {
       const raw: unknown = await request.json()
-      prefs = parsePipelinePreferencesBody(raw)
+      const parsed = parseFilterRequestPayload(raw)
+      prefs = parsed.prefs
+      maxCandidates = parsed.maxCandidates
+      batchSize = parsed.batchSize
     }
   } catch {
     prefs = DEFAULT_PIPELINE_PREFS
   }
 
   console.log(
-    `[/api/filter] prefs topicMode=${prefs.topicMode} scope=${prefs.scope} customLen=${prefs.topicCustom.length}`
+    `[/api/filter] prefs topicMode=${prefs.topicMode} scope=${prefs.scope} customLen=${prefs.topicCustom.length}` +
+      (maxCandidates != null || batchSize != null
+        ? ` runTuning maxCandidates=${maxCandidates ?? 'default'} batchSize=${batchSize ?? 'default'}`
+        : '')
   )
 
   const profileRow = await loadUserProfileRow(user.id)
-  const userPrompt = buildScoringUserPrompt(profileRow?.profile ?? {})
+  const userPrompt = buildScoringUserPrompt(
+    profileRow?.profile ?? {},
+    profileRow?.scoring_markdown ?? null
+  )
 
   try {
     const result = await runFilterPipeline({
@@ -58,15 +63,12 @@ export async function POST(request: Request) {
       anthropicApiKey: apiKey,
       userPrompt,
       prefs,
+      maxCandidates,
+      batchSize,
     })
 
     const notified = await sendNotificationsForNewStories(user.id)
     if (notified > 0) console.log(`[/api/filter] Sent ${notified} push notifications`)
-
-    const parseWarning =
-      result.claudeParseFailures > 0
-        ? `Claude returned ${result.claudeParseFailures} batch(es) that could not be parsed as JSON; check server logs.`
-        : undefined
 
     const baseline = profileRow ?? { profile: {}, onboarding_completed: false }
     const prev =
@@ -95,10 +97,20 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
+      ok: true,
       success: true,
-      ...result,
+      processed: result.processed,
+      stored: result.stored,
+      totalInputTokens: result.totalInputTokens,
+      totalOutputTokens: result.totalOutputTokens,
+      estimatedCost: result.estimatedCost,
+      totalBatches: result.totalBatches,
       notified,
-      ...(parseWarning ? { parseWarning } : {}),
+      ...(result.claudeParseFailures > 0
+        ? {
+            parseWarning: `Claude returned ${result.claudeParseFailures} of ${result.totalBatches} batch(es) that could not be parsed as JSON (batch${result.parseFailureBatchIndices.length === 1 ? '' : 'es'} ${result.parseFailureBatchIndices.join(', ')}); check server logs.`,
+          }
+        : {}),
     })
   } catch (err) {
     console.error('[/api/filter] Error:', err)

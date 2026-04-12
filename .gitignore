@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local Lighthouse runs
 lighthouse-report.json
+
+# Cursor agent debug NDJSON (written by dev-only API routes)
+.cursor/debug*.log

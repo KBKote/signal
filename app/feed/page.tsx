@@ -12,18 +12,20 @@ import {
 } from '@/components/PipelinePreferences'
 import {
   canSubmitPipelinePrefs,
+  DEFAULT_PIPELINE_RUN_TUNING,
   parseStoredLastPipelinePrefs,
   stablePipelinePrefsKey,
+  type PipelineRunTuning,
 } from '@/lib/pipeline-preferences'
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
 const STORIES_PAGE_SIZE = 25
 
 const TERMINAL_LINES = [
-  'watcher/rss          connected (12 sources)',
-  'watcher/reddit       connected (4 subreddits)',
+  'watcher/rss          connected (22 sources)',
+  'watcher/reddit       connected (11 subreddits)',
   'watcher/hn           connected (front-page stream)',
-  'pipeline/filter      scoring batch via claude-haiku-4-5',
+  'pipeline/filter      scoring batches 2× parallel via claude-haiku-4-5',
   'pipeline/storage     upserting scored stories',
   'alerts/opportunity   evaluating score >= 8 signals',
 ]
@@ -34,11 +36,13 @@ const INITIAL_PIPE_STEPS = [
   { label: 'Reload feed from database', state: 'pending' as StepState },
 ]
 
-function filterRequestBody(prefs: PipelinePreferences) {
+function filterRequestBody(prefs: PipelinePreferences, tuning: PipelineRunTuning) {
   return JSON.stringify({
     topicMode: prefs.topicMode,
     topicCustom: prefs.topicMode === 'other' ? prefs.topicCustom : '',
     scope: prefs.scope,
+    maxCandidates: tuning.maxCandidates,
+    batchSize: tuning.batchSize,
   })
 }
 
@@ -56,6 +60,14 @@ export default function LiveFeedPage() {
   const [pipelineMessage, setPipelineMessage] = useState('Control room online.')
   const [pipeSteps, setPipeSteps] = useState(INITIAL_PIPE_STEPS)
   const [pipelinePrefs, setPipelinePrefs] = useState<PipelinePreferences>(DEFAULT_PIPELINE_PREFS)
+  const [pipelineRunTuning, setPipelineRunTuning] = useState<PipelineRunTuning>(DEFAULT_PIPELINE_RUN_TUNING)
+  const [lastRunStats, setLastRunStats] = useState<{
+    inputTokens: number
+    outputTokens: number
+    estimatedCost: number
+    stored: number
+    batches: number
+  } | null>(null)
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false)
   const [resettingProgress, setResettingProgress] = useState(false)
   const [hasMoreStories, setHasMoreStories] = useState(false)
@@ -190,7 +202,7 @@ export default function LiveFeedPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: filterRequestBody(pipelinePrefs),
+        body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
       })
       if (!scrape.ok) {
         throw new Error(await readJsonError(scrape, 'Scrape failed'))
@@ -203,16 +215,35 @@ export default function LiveFeedPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: filterRequestBody(pipelinePrefs),
+        body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
       })
       const filterPayload = (await filter.json().catch(() => ({}))) as {
         error?: unknown
         parseWarning?: string
+        processed?: number
+        stored?: number
+        totalInputTokens?: number
+        totalOutputTokens?: number
+        estimatedCost?: number
+        totalBatches?: number
       }
       if (!filter.ok) {
         throw new Error(typeof filterPayload.error === 'string' ? filterPayload.error : 'Filter failed')
       }
       mark(1, 'done')
+
+      if (
+        typeof filterPayload.totalInputTokens === 'number' &&
+        typeof filterPayload.totalOutputTokens === 'number'
+      ) {
+        setLastRunStats({
+          inputTokens: filterPayload.totalInputTokens,
+          outputTokens: filterPayload.totalOutputTokens,
+          estimatedCost: filterPayload.estimatedCost ?? 0,
+          stored: filterPayload.stored ?? 0,
+          batches: filterPayload.totalBatches ?? 0,
+        })
+      }
 
       pipelineRunningRef.current = false
       mark(2, 'running')
@@ -221,10 +252,14 @@ export default function LiveFeedPage() {
       if (!ok) throw new Error('Stories fetch failed')
       mark(2, 'done')
 
+      const batchNote =
+        typeof filterPayload.totalBatches === 'number' && filterPayload.totalBatches > 0
+          ? ` (${filterPayload.totalBatches} batch${filterPayload.totalBatches === 1 ? '' : 'es'})`
+          : ''
       setPipelineMessage(
         typeof filterPayload.parseWarning === 'string'
-          ? `Control room synced. Note: ${filterPayload.parseWarning}`
-          : 'Control room synced.'
+          ? `Control room synced${batchNote}. Note: ${filterPayload.parseWarning}`
+          : `Control room synced${batchNote}.`
       )
 
       lastSuccessfulPipelinePrefsRef.current = {
@@ -248,7 +283,7 @@ export default function LiveFeedPage() {
       pipelineRunningRef.current = false
       setRunningPipeline(false)
     }
-  }, [fetchStories, pipelinePrefs, hasAnthropicKey])
+  }, [fetchStories, pipelinePrefs, pipelineRunTuning, hasAnthropicKey])
 
   const resetScoringProgress = useCallback(async () => {
     if (!hasAnthropicKey || runningPipeline || resettingProgress) return
@@ -361,6 +396,8 @@ export default function LiveFeedPage() {
               <PipelinePreferencesPanel
                 value={pipelinePrefs}
                 onChange={setPipelinePrefs}
+                runTuning={pipelineRunTuning}
+                onRunTuningChange={setPipelineRunTuning}
                 disabled={runningPipeline}
               />
               <div className="mt-4">
@@ -424,6 +461,37 @@ export default function LiveFeedPage() {
                   {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Loading...'}
                 </p>
               </div>
+              {lastRunStats ? (
+                <div className="rounded-xl border border-white/10 bg-black/40 p-4">
+                  <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                    Last run tokens
+                  </p>
+                  <div className="space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Input</span>
+                      <span className="font-medium text-zinc-200">
+                        {lastRunStats.inputTokens.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Output</span>
+                      <span className="font-medium text-zinc-200">
+                        {lastRunStats.outputTokens.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Est. cost</span>
+                      <span className="font-medium text-zinc-200">
+                        ${lastRunStats.estimatedCost.toFixed(4)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t border-white/10 pt-1.5">
+                      <span className="text-zinc-500">Stored</span>
+                      <span className="font-medium text-zinc-200">{lastRunStats.stored} stories</span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>

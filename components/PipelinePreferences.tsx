@@ -1,27 +1,41 @@
 'use client'
 
 import {
+  BUDGET_PRESET_LABELS,
+  BUDGET_PRESETS,
+  BUDGET_PRESET_TUNING,
   DEFAULT_PIPELINE_PREFS,
+  matchBudgetPreset,
   SCOPES,
   TOPIC_CUSTOM_MAX_LEN,
   TOPIC_MODES,
   TOPIC_MODE_LABELS,
   SCOPE_LABELS,
   type PipelinePreferences,
+  type PipelineRunTuning,
   type ScopeLevel,
   type TopicMode,
 } from '@/lib/pipeline-preferences'
 
-export type { PipelinePreferences }
+export type { PipelinePreferences, PipelineRunTuning }
 
 interface Props {
   value: PipelinePreferences
   onChange: (next: PipelinePreferences) => void
+  runTuning: PipelineRunTuning
+  onRunTuningChange: (next: PipelineRunTuning) => void
   disabled?: boolean
   hint?: string
 }
 
-export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Props) {
+export function PipelinePreferencesPanel({
+  value,
+  onChange,
+  runTuning,
+  onRunTuningChange,
+  disabled,
+  hint,
+}: Props) {
   const setTopicMode = (topicMode: TopicMode) => {
     onChange({
       ...value,
@@ -117,6 +131,35 @@ export function PipelinePreferencesPanel({ value, onChange, disabled, hint }: Pr
                 {SCOPE_LABELS[s]}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="border-t border-white/10 pt-4">
+          <span className="block font-mono text-xs text-zinc-400">Token budget</span>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            How many stories to score per run. Higher budgets use more Haiku tokens and take longer.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {BUDGET_PRESETS.map((preset) => {
+              const { label, hint } = BUDGET_PRESET_LABELS[preset]
+              const active = matchBudgetPreset(runTuning) === preset
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onRunTuningChange(BUDGET_PRESET_TUNING[preset])}
+                  className={`flex flex-col rounded-lg border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    active
+                      ? 'border-white/30 bg-white text-black'
+                      : 'border-white/10 bg-zinc-950/90 text-zinc-200 hover:border-white/20'
+                  }`}
+                >
+                  <span className="font-medium">{label}</span>
+                  <span className={`mt-0.5 text-[11px] ${active ? 'text-zinc-600' : 'text-zinc-500'}`}>{hint}</span>
+                </button>
+              )
+            })}
           </div>
         </div>
       </div>

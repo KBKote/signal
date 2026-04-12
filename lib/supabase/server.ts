@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { getSupabasePublicAnonKey, getSupabasePublicUrl } from '@/lib/supabase-public-env'
 
 /**
  * Supabase client bound to the current request cookies (session).
@@ -9,8 +10,8 @@ export async function createSupabaseServerClient() {
   const cookieStore = await cookies()
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    getSupabasePublicUrl(),
+    getSupabasePublicAnonKey(),
     {
       cookies: {
         getAll() {

@@ -1,10 +1,11 @@
 /**
  * Client-side: where to send a signed-in user based on setup progress.
- * Order: Anthropic key (BYOK) → feed. (Optional onboarding page exists for later; not required in the path.)
+ * Order: verified email → BYOK → scoring profile (`scoring_markdown`) → feed.
  */
 export type SetupStatus = {
+  emailVerified: boolean
   hasAnthropicKey: boolean
-  onboardingCompleted: boolean
+  hasScoringProfile: boolean
 }
 
 export async function fetchSetupStatus(): Promise<SetupStatus | null> {
@@ -13,14 +14,17 @@ export async function fetchSetupStatus(): Promise<SetupStatus | null> {
   if (!r.ok) return null
   const j = (await r.json()) as SetupStatus
   return {
+    emailVerified: Boolean(j.emailVerified),
     hasAnthropicKey: Boolean(j.hasAnthropicKey),
-    onboardingCompleted: Boolean(j.onboardingCompleted),
+    hasScoringProfile: Boolean(j.hasScoringProfile),
   }
 }
 
 export function destinationFromSetup(s: SetupStatus | null): string {
   if (!s) return '/settings'
+  if (!s.emailVerified) return '/verify-email'
   if (!s.hasAnthropicKey) return '/settings'
+  if (!s.hasScoringProfile) return '/onboarding'
   return '/feed'
 }
 

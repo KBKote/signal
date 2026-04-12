@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
 import type { PostgrestError } from '@supabase/supabase-js'
 import { getSessionUser } from '@/lib/auth/session'
+import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 const ARCHIVE_HOURS = 48
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 80
+/** Lowest score returned in the feed — must be <= expansive pipeline store floor (4). */
+const MIN_FEED_SCORE = 4
 
 const STORY_COLUMNS =
   'id,raw_story_id,title,url,source,summary,category,score,why,published_at,scored_at,seen,notified'
@@ -80,7 +83,7 @@ async function fetchStoriesViaRest(
     .select(STORY_COLUMNS)
     .eq('user_id', userId)
     .gte('scored_at', cutoff)
-    .gte('score', 5)
+    .gte('score', MIN_FEED_SCORE)
 
   if (cursor) {
     q = q.or(keysetOrFilter(cursor))
@@ -101,6 +104,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  const ready = await assertUserReadyForPipeline(user)
+  if (!ready.ok) return ready.response
+
   const { searchParams } = new URL(request.url)
   const limit = clamp(parseInt(searchParams.get('limit') ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT, 1, MAX_LIMIT)
   const cursorRaw = searchParams.get('cursor')
@@ -117,7 +123,7 @@ export async function GET(request: Request) {
     p_user_id: user.id,
     p_limit: fetchLimit,
     p_cutoff: cutoff,
-    p_min_score: 5,
+    p_min_score: MIN_FEED_SCORE,
     p_cursor_score: cursor?.score ?? null,
     p_cursor_scored_at: cursor?.scored_at ?? null,
     p_cursor_id: cursor?.id ?? null,

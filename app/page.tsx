@@ -6,7 +6,7 @@ import { getServerPostAuthDestination } from '@/lib/auth/post-auth-redirect-serv
 export default async function HomePage() {
   const user = await getSessionUser()
   if (user) {
-    const path = await getServerPostAuthDestination(user.id)
+    const path = await getServerPostAuthDestination(user)
     redirect(path)
   }
 

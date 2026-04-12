@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' next dev",
+    "dev:fresh": "rm -rf .next && NODE_OPTIONS='--dns-result-order=ipv4first' next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_OPTIONS='--dns-result-order=ipv4first' next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "tunnel": "cloudflared tunnel --url http://localhost:3000"
   },
   "dependencies": {
@@ -34,6 +37,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.4"
   }
 }

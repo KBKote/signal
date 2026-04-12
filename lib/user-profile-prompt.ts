@@ -19,9 +19,15 @@ export function parseOnboardingProfile(raw: unknown): OnboardingProfileV1 {
 }
 
 /**
- * Full scoring preamble: static defaults plus onboarding answers (if any).
+ * Full scoring preamble: synthesized markdown (preferred), else static defaults plus legacy onboarding JSON (if any).
  */
-export function buildScoringUserPrompt(profileJson: unknown): string {
+export function buildScoringUserPrompt(
+  profileJson: unknown,
+  scoringMarkdown?: string | null
+): string {
+  const md = typeof scoringMarkdown === 'string' ? scoringMarkdown.trim() : ''
+  if (md) return md
+
   const p = parseOnboardingProfile(profileJson)
   const hasCustom = [p.background, p.goals, p.avoid, p.experience].some((x) => x && x.trim())
 

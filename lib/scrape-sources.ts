@@ -18,6 +18,20 @@ export const RSS_FEEDS_BASE: RssFeedDef[] = [
   { url: 'https://www.theverge.com/rss/index.xml', source: 'the-verge' },
   { url: 'https://feeds.arstechnica.com/arstechnica/index', source: 'ars-technica' },
   { url: 'https://huggingface.co/blog/feed.xml', source: 'huggingface' },
+  { url: 'https://cointelegraph.com/rss', source: 'cointelegraph' },
+  { url: 'https://a16zcrypto.com/feed/', source: 'a16z-crypto' },
+  { url: 'https://newsletter.banklesshq.com/feed', source: 'bankless' },
+  { url: 'https://www.dlnews.com/feed/', source: 'dl-news' },
+  { url: 'https://protos.com/feed/', source: 'protos' },
+  { url: 'https://blog.chain.link/feed/', source: 'chainlink-blog' },
+  { url: 'https://www.theblock.co/rss.xml', source: 'the-block' },
+  { url: 'https://simonwillison.net/atom/everything/', source: 'simon-willison' },
+  { url: 'https://www.interconnects.ai/feed', source: 'interconnects' },
+  { url: 'https://www.semianalysis.com/feed', source: 'semianalysis' },
+  { url: 'https://openai.com/blog/rss/', source: 'openai-blog' },
+  { url: 'https://www.anthropic.com/news.rss', source: 'anthropic-news' },
+  { url: 'https://bair.berkeley.edu/blog/feed.xml', source: 'bair' },
+  { url: 'https://newsletter.pragmaticengineer.com/feed', source: 'pragmatic-engineer' },
 ]
 
 export const REDDIT_BASE: RedditSubDef[] = [
@@ -26,6 +40,12 @@ export const REDDIT_BASE: RedditSubDef[] = [
   { name: 'MachineLearning', sort: 'top.json?t=day' },
   { name: 'LocalLLaMA', sort: 'top.json?t=day' },
   { name: 'cryptocurrency', sort: 'hot.json' },
+  { name: 'ethdev', sort: 'top.json?t=day' },
+  { name: 'ZeroKnowledge', sort: 'top.json?t=day' },
+  { name: 'LangChain', sort: 'hot.json' },
+  { name: 'OpenAI', sort: 'hot.json' },
+  { name: 'algotrading', sort: 'top.json?t=day' },
+  { name: 'CryptoTechnology', sort: 'top.json?t=day' },
 ]
 
 const RSS_MACRO: RssFeedDef[] = [
@@ -39,15 +59,15 @@ const REDDIT_MACRO: RedditSubDef[] = [
   { name: 'investing', sort: 'hot.json' },
   { name: 'stocks', sort: 'hot.json' },
   { name: 'MacroEconomics', sort: 'top.json?t=day' },
-  { name: 'economy', sort: 'top.json?t=week' },
-  { name: 'SecurityAnalysis', sort: 'top.json?t=week' },
+  { name: 'economy', sort: 'top.json?t=day' },
+  { name: 'SecurityAnalysis', sort: 'top.json?t=day' },
 ]
 
 const RSS_ETHEREUM: RssFeedDef[] = [{ url: 'https://blog.ethereum.org/en/rss.xml', source: 'ethereum-blog' }]
 
 const REDDIT_ETHEREUM: RedditSubDef[] = [
   { name: 'ethfinance', sort: 'hot.json' },
-  { name: 'ethstaker', sort: 'top.json?t=week' },
+  { name: 'ethstaker', sort: 'top.json?t=day' },
   { name: 'rethfinance', sort: 'hot.json' },
 ]
 
@@ -58,7 +78,7 @@ const RSS_AI: RssFeedDef[] = [
 
 const REDDIT_AI: RedditSubDef[] = [
   { name: 'artificial', sort: 'hot.json' },
-  { name: 'singularity', sort: 'top.json?t=week' },
+  { name: 'singularity', sort: 'top.json?t=day' },
   { name: 'ChatGPT', sort: 'hot.json' },
 ]
 
@@ -75,7 +95,7 @@ const REDDIT_DEV: RedditSubDef[] = [
 
 /** Default HN Algolia `query` — also used when topic is intersection-only. */
 export const HN_QUERY_DEFAULT =
-  'AI OR "machine learning" OR ethereum OR crypto OR DeFi OR LLM OR "language model"'
+  'AI OR "machine learning" OR ethereum OR crypto OR DeFi OR LLM OR "language model" OR anthropic OR openai OR "zero knowledge" OR zkEVM OR "smart contract" OR solidity OR "AI agent" OR inference'
 
 const HN_QUERY_MACRO =
   '(fed OR FOMC OR inflation OR treasury OR earnings OR IPO OR "stock market" OR GDP OR recession OR "interest rate" OR forex OR commodity OR bitcoin OR ethereum)'

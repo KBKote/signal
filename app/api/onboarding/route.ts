@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { isEmailVerified } from '@/lib/auth/user-setup-gates'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
+import { getDecryptedAnthropicKey } from '@/lib/user-credentials'
 import { loadUserProfileRow } from '@/lib/user-profiles-db'
 
 export async function GET() {
@@ -20,6 +22,15 @@ export async function POST(req: Request) {
   const user = await getSessionUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!isEmailVerified(user)) {
+    return NextResponse.json({ error: 'verify_email_first' }, { status: 403 })
+  }
+  if (!(await getDecryptedAnthropicKey(user.id))) {
+    return NextResponse.json(
+      { error: 'Add your Anthropic API key in Settings' },
+      { status: 400 }
+    )
   }
 
   let body: {

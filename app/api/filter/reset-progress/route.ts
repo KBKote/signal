@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
@@ -13,6 +14,9 @@ export async function POST() {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  const ready = await assertUserReadyForPipeline(user)
+  if (!ready.ok) return ready.response
 
   const { error: scoredErr } = await getSupabaseAdmin().from('scored_stories').delete().eq('user_id', user.id)
   if (scoredErr) {

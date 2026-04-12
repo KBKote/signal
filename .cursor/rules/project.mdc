@@ -1,0 +1,108 @@
+---
+description: Signal app — always-on project guardrails, architecture, and hard constraints
+alwaysApply: true
+---
+
+# Signal — Project Rules
+
+## What This Is
+A personalized news-filtering app. Scrapes RSS/Reddit/HN → Claude Haiku batch scoring (BYOK) → per-user scored feed. Stack: Next.js 16 App Router, Supabase (Postgres + Auth), Tailwind CSS, Vercel (Hobby).
+
+## User Journey (enforced by gates)
+sign up → verify email → BYOK in /settings → /onboarding (10-question questionnaire → Sonnet synthesis → scoring_markdown) → /feed
+
+Gates are centralized in `lib/auth/user-setup-gates.ts` (`getUserSetupGates`, `nextSetupPath`, `assertUserReadyForPipeline`). Every protected page layout and every sensitive API route enforces this chain in order.
+
+## Architecture
+```
+proxy.ts → session check → email verified → /verify-email
+                         → BYOK check    → /settings
+                         → profile check → /onboarding
+                         → /feed
+
+API routes: getSessionUser() → assertUserReadyForPipeline() → business logic
+
+Haiku batch scoring:
+loadUserProfileRow(userId)
+  → buildScoringUserPrompt(profileRow)   ← prefers scoring_markdown; falls back to USER_PROFILE
+  → runFilterPipeline({ userPrompt, anthropicApiKey: user BYOK only })
+```
+
+## Hard Constraints — Never Violate These
+
+### Auth
+- Every sensitive API starts with `getSessionUser()` → 401 if null
+- Then `assertUserReadyForPipeline(user)` → 403/400 on gate failure
+- Gate order: session → email verified → BYOK → scoring_markdown
+
+### BYOK isolation (top priority)
+- `/api/filter`, `/api/onboarding/synthesize-profile`, and ALL user Anthropic calls: **only** `getDecryptedAnthropicKey(sessionUser.id)`
+- If null → return 400 "add your key" — **never** substitute `process.env.ANTHROPIC_API_KEY`
+- Operator key (`ANTHROPIC_API_KEY`) is for future server-only/cron jobs only — never a fallback for signed-in user flows
+- `getSupabaseAdmin()` admin queries: always scope by `.eq('user_id', session user.id)`
+
+### Claude model usage
+- `lib/filter.ts` batch scoring: **Haiku only** (`claude-haiku-4-5-20251001`) — never Sonnet/Opus
+- Profile synthesis route (`/api/onboarding/synthesize-profile`): Sonnet via `ANTHROPIC_PROFILE_MODEL` env — one-shot only, user BYOK
+- **Never** call Claude per-story — minimum batch of 10 stories per call
+- Always log token usage to `api_usage` table on every Claude call
+
+### Supabase clients
+- **Never** wrap Supabase clients in a `Proxy` (breaks TypeScript generics)
+- **Never** initialize Supabase/web-push/any SDK at module top level — always lazy (getter or first-use init)
+- Use `getSupabaseAdmin()` from `lib/supabase-server.ts` for all privileged server reads/writes
+- Browser client via `lib/supabase/client.ts`; server client via `lib/supabase/server.ts`
+
+### Database
+- Never `upsert` with `onConflict` on a column without a matching UNIQUE constraint
+- `user_profiles` columns for Phase 2: `scoring_markdown` (text), `questionnaire_answers` (jsonb), `synthesized_at` (timestamptz) — these are **dedicated columns**, not buried in the `profile` jsonb
+
+### Navigation
+- After sign-in, use `window.location.assign(next)` — never `router.replace()` (cookie race condition)
+- Root `/` is a Server Component: `getSessionUser()` + redirect, never a client auth gate
+- Use `getPublicOrigin(request)` from `lib/request-origin.ts` for auth redirects — reads `X-Forwarded-Host` so Cloudflare tunnel works
+
+### Vercel
+- Hobby plan: one cron per day max — `vercel.json` uses `0 0 * * *` only
+
+## Key Files
+| File | Role |
+|------|------|
+| `lib/auth/user-setup-gates.ts` | Gate logic: `getUserSetupGates`, `assertUserReadyForPipeline` |
+| `lib/auth/post-auth-redirect-server.ts` | Server-side post-login routing |
+| `lib/user-profile-prompt.ts` | `buildScoringUserPrompt` — prefers `scoring_markdown`, falls back to `USER_PROFILE` |
+| `lib/user-profiles-db.ts` | `loadUserProfileRow` — loads all profile columns including `scoring_markdown` |
+| `lib/filter.ts` | Haiku batch scoring — `runFilterPipeline` |
+| `lib/profile-synthesis-prompt.ts` | `buildSynthesisPrompt(answers)` — Sonnet one-shot template |
+| `lib/crypto-user-secrets.ts` | AES-256-GCM encrypt/decrypt for BYOK keys |
+| `lib/supabase-server.ts` | Lazy `getSupabaseAdmin()` |
+| `proxy.ts` | Request-based auth routing (Next.js 16, replaces middleware.ts) |
+| `supabase/schema.sql` | Full DB schema + RLS policies |
+| `CLAUDE.md` | **Single source of truth** for all known bugs and working patterns — read before any implementation |
+
+## Database Tables
+```
+raw_stories           -- shared scraped pool (no user_id)
+user_raw_scored       -- per-user scoring completion tracking
+scored_stories        -- per-user scored stories
+user_api_credentials  -- encrypted BYOK Anthropic keys
+api_usage             -- token tracking per Claude call
+user_profiles         -- profile jsonb + scoring_markdown + questionnaire_answers + synthesized_at
+push_subscriptions    -- Web Push per user
+filter_user_throttle  -- 90s rate limit per user
+scrape_user_throttle  -- scrape rate limit per user
+```
+
+## Cost Controls
+- Haiku only in `lib/filter.ts` — target < $3/month
+- Sonnet only for one-shot profile synthesis — one call per onboarding, user BYOK
+- Pre-filter by keyword before Claude (halves token usage)
+- Strip markdown fences before `JSON.parse` on all Claude responses: `.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()`
+- Log every Claude call: `api_usage.insert({ user_id, input_tokens, output_tokens, estimated_cost })`
+
+## Delivery Workflow (mandatory)
+1. Read `CLAUDE.md` learning log in full before writing any code
+2. Implement smallest vertical slice that compiles
+3. `npm run lint` + `npm run build` — fix before proceeding
+4. Append new bugs or patterns to `CLAUDE.md` learning log
+5. Repeat

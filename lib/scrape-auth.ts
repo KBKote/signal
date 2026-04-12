@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { takeScrapeRateSlotDb } from '@/lib/scrape-rate-limit'
 
 /**
@@ -21,6 +22,8 @@ export async function scrapeAccessDeniedResponse(request: Request): Promise<Next
 
   const user = await getSessionUser()
   if (user) {
+    const ready = await assertUserReadyForPipeline(user)
+    if (!ready.ok) return ready.response
     const rateMsg = await takeScrapeRateSlotDb(user.id)
     if (rateMsg) {
       return NextResponse.json({ success: false, error: rateMsg }, { status: 429 })

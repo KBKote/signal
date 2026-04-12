@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
+import { isEmailVerified } from '@/lib/auth/user-setup-gates'
 import { encryptSecret } from '@/lib/crypto-user-secrets'
 import { isPlausibleAnthropicKey } from '@/lib/user-credentials'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
@@ -8,6 +9,9 @@ export async function POST(req: Request) {
   const user = await getSessionUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!isEmailVerified(user)) {
+    return NextResponse.json({ error: 'verify_email_first' }, { status: 403 })
   }
 
   let body: { apiKey?: string }
@@ -54,6 +58,9 @@ export async function DELETE() {
   const user = await getSessionUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!isEmailVerified(user)) {
+    return NextResponse.json({ error: 'verify_email_first' }, { status: 403 })
   }
 
   const { error } = await getSupabaseAdmin().from('user_api_credentials').delete().eq('user_id', user.id)

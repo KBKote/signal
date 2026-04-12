@@ -1,0 +1,170 @@
+---
+description: Signal app — full learning log of every known bug, fix, and working pattern. Read this before implementing anything.
+alwaysApply: true
+---
+
+# Signal — Bug Log & Working Patterns
+
+> This file mirrors the Claude Learning Log in `CLAUDE.md`. When a new bug is found and fixed, append it here AND in `CLAUDE.md` so both stay in sync.
+
+---
+
+## Build 1 — Initial scaffold
+
+**BUG 1: `create-next-app` refuses non-empty directory**
+- Symptom: `The directory signal contains files that could conflict: CLAUDE.md`
+- Fix: scaffold into a temp sibling dir, then `rsync -a --ignore-existing` into real dir.
+
+**BUG 2: Supabase client created at module load → crashes `next build`**
+- Symptom: `Error: supabaseUrl is required` during build
+- Root cause: `createClient(...)` at module top level runs during static generation when env vars are absent
+- Fix: wrap in lazy getter — called on first use, not on import
+- **Pattern: any singleton client that reads env vars must initialize lazily, never at module top level**
+
+**BUG 3: `web-push.setVapidDetails()` at module load → crashes `next build`**
+- Symptom: `Error: No key set vapidDetails.publicKey` during build
+- Root cause: same as Bug 2 — library validates config on init
+- Fix: move `setVapidDetails()` into a `configureWebPush()` helper called at runtime
+- **Pattern: any library that validates configuration on initialization must be configured lazily**
+
+**BUG 4: Multiple `package-lock.json` files — workspace root warning**
+- Symptom: `Next.js inferred your workspace root, but it may not be correct`
+- Fix: set `turbopack.root` in `next.config.ts` to `path.resolve(__dirname)`
+
+**BUG 5: `upsert` with `onConflict` on non-unique column silently stores 0 rows**
+- Symptom: filter runs, reports `stored: 0`, no exception
+- Root cause: `onConflict: 'url'` on a column with no UNIQUE constraint — Supabase returns an error that was only logged
+- Fix: use plain `.insert()` since upstream deduplication already handles it
+- **Pattern: never use `onConflict` on a column that doesn't have a matching UNIQUE constraint in the schema**
+
+**BUG 6: Proxy-wrapped Supabase client breaks TypeScript type inference**
+- Symptom: `No overload matches this call` / `.from()` returns `never`
+- Root cause: TypeScript cannot infer generics through a `Proxy`
+- Fix: remove Proxy entirely — use direct `createClient()` and `getSupabaseAdmin()`
+- **Pattern: never wrap Supabase clients in a Proxy**
+
+**BUG 7: Wrong anon key (dropped digit in JWT) → infinite loading**
+- Symptom: page loads skeleton but never resolves
+- Root cause: manually transcribed JWT with one wrong digit — invalidates the entire token
+- Fix: correct the key; add `setLoading(false)` in error branch so page always resolves
+- **Pattern: always paste JWT tokens directly — never retype or reconstruct them**
+
+**BUG 8: Feed showed "No stories yet" even though filter stored rows**
+- Symptom: filter returns `stored > 0` but UI shows empty feed
+- Root cause: browser-side anon Supabase query returned 0 rows (RLS mismatch); service-role had data
+- Fix: move feed read to server API (`/api/stories`) backed by `getSupabaseAdmin()`, fetch from there
+- **Pattern: for critical first-render data, prefer server-side read path over client anon queries unless RLS is explicitly validated**
+
+**BUG 9: MCP global availability missing despite project config**
+- Root cause: `~/.cursor/mcp.json` didn't have the same `mcpServers` block as project config
+- Fix: copy project `mcpServers` block into global `~/.cursor/mcp.json`
+
+---
+
+## Build 2 — Public auth landing, email/password, setup wizard
+
+**BUG 10: `/` stuck on "Loading…" — auth form never appeared**
+- Root cause A: `useSearchParams()` in root client entry kept page inside unresolved Suspense boundary
+- Root cause B: `supabase.auth.getUser()` stayed pending when network was blocked
+- Fix: make `app/page.tsx` a Server Component — `getSessionUser()` + redirect, else render `MarketingBody` immediately. No client auth gate at root.
+- **Pattern: root `/` must be server-rendered with a hard redirect — never a client component waiting on auth state**
+
+**BUG 11: Puppeteer / tests hit wrong Next.js process**
+- Root cause: second `next dev` on another port while port 3000 held by old server
+- Fix: kill duplicate PIDs or use `PORT=3010 npm run start` after `next build` for testing
+
+**BUG 12: `/` stuck on "Loading…" in some browsers**
+- Root cause: client-only `MarketingOrRedirect` waited on `supabase.auth.getUser()`; hung on throttled timers or flaky network
+- Fix: same as Bug 10 — server component renders `MarketingBody` immediately
+- **Pattern: never use a client auth gate for the root page**
+
+**BUG 13: Login loop — credentials clear, bounce back to `/login`**
+- Symptom: after login, brief nav then back to empty login form
+- Root cause: `router.replace()` after `signInWithPassword` raced Supabase cookie persistence
+- Fix: use `window.location.assign(next)` after sign-in, not `router.replace`
+- **Pattern: always use `window.location.assign` after Supabase sign-in — never App Router navigation**
+
+**BUG 14: Auth redirects go to `localhost` on Cloudflare tunnel**
+- Symptom: tunnel URL loads but auth redirects go to `http://localhost:3000` on phone
+- Root cause: behind `cloudflared`, Node sees `request.url` as localhost; `NextResponse.redirect` used that origin
+- Fix: `lib/request-origin.ts` — `getPublicOrigin(request)` reads `X-Forwarded-Host` / `X-Forwarded-Proto` when present. Use in `proxy.ts` and `/auth/callback`
+- Also required: Supabase Redirect URLs must include the tunnel URL
+- **Pattern: always use `getPublicOrigin(request)` for auth redirects — never `request.nextUrl.origin` directly**
+
+**Note: Next.js 16** — `middleware.ts` is deprecated. Use root `proxy.ts` with exported `proxy` and `config.matcher`.
+
+**Setup path (product order):** sign up → `/verify-email` → `/settings` (BYOK) → `/onboarding` (scoring profile) → `/feed`. Implemented in `lib/auth/post-auth-navigation.ts` + `lib/auth/user-setup-gates.ts` + server layouts.
+
+---
+
+## Build 3 — Gated onboarding (Phase 1)
+
+**WORKING PATTERN — gated setup (email → BYOK → `scoring_markdown`):**
+- Centralize all checks in `lib/auth/user-setup-gates.ts`
+- `proxy.ts` enforces email verified for all protected routes
+- Server layouts on `/feed`, `/settings`, `/onboarding` mirror the same gate order
+- All pipeline APIs call `assertUserReadyForPipeline()` — browser cannot skip gates
+- Confirmed: Bug 8 pattern holds — `loadUserProfileRow` always `.eq('user_id', userId)`
+
+**BUG 15: `getServerPostAuthDestination(userId)` couldn't see `email_confirmed_at`**
+- Symptom: logged-in users skipped email verification and scoring-profile gates
+- Root cause: destination helper only checked BYOK via `userId`, not `User.email_confirmed_at` or `scoring_markdown`
+- Fix: pass full `User` into `getServerPostAuthDestination(user)`; share `getUserSetupGates` / `nextSetupPath` with client status API; add `/verify-email` and `scoring_markdown` column for `hasScoringProfile`
+- **Temporary:** `hasScoringProfile` is true if `scoring_markdown` is set **or** `onboarding_completed` is true (legacy fallback). Tighten to markdown-only after Phase 2 migration.
+
+---
+
+## Working Patterns (always follow these)
+
+**Claude Haiku JSON output:**
+- Ask for a plain JSON array, no markdown fences
+- Always strip accidental fences before parsing: `.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()`
+- Prevents parse failures when model adds fences anyway
+
+**Supabase upsert for deduplication:**
+- Use `{ onConflict: 'url', ignoreDuplicates: true }` — right for scrapers where URL is unique
+- Don't use plain `.insert()` where duplicates are expected (throws on conflict)
+
+**Feed scoring / store floor:**
+- Scope-aware store floors: precise=6, balanced=5, expansive=4 (`minScoreToStoreForScope` in `lib/pipeline-preferences.ts`)
+- `MIN_FEED_SCORE` in `/api/stories` aligned to 4 so stored 4s appear
+- Default `MAX_CANDIDATES=80`, `BATCH_SIZE=24`
+- Reddit topic-pack subs use `t=day` not `t=week` for fresher pools
+
+**Vercel cron (Hobby):**
+- One cron max: `0 0 * * *` in `vercel.json` — more frequent schedules fail deploy on Hobby
+
+**Verification loop that worked:**
+- Run live app → capture screenshot → compare expected UI → inspect API/DB state → patch → lint → screenshot again
+
+**Fast RLS diagnosis:**
+- Compare same query with anon key vs service-role key — large count mismatch immediately identifies access-layer issues vs ingestion/filter bugs
+
+**`buildScoringUserPrompt` precedence (Phase 2+):**
+- If `scoring_markdown` is set and non-empty → return it (primary Haiku context)
+- Else legacy: `USER_PROFILE` + questionnaire append if any fields present
+- Else: bare `USER_PROFILE.trim()`
+- Call site in `/api/filter/route.ts`: `buildScoringUserPrompt(profileRow?.profile ?? {}, profileRow?.scoring_markdown ?? null)`
+
+**Synthesis route guards (Phase 2b):**
+- Guard order: 401 session → 403 `{ error: "verify_email_first" }` → 400 `{ error: "add_key_first" }` → 400 `{ error: "invalid_answers", detail }` (from `parseQuestionnaireAnswers` throw) → require `ANTHROPIC_PROFILE_MODEL` or 503 `{ error: "missing_profile_model" }` → Sonnet call
+- `new Anthropic({ apiKey })` only inside the POST handler path (per Bug 2); **BYOK only** — never `process.env.ANTHROPIC_API_KEY` for this route
+- Model id **only** from `process.env.ANTHROPIC_PROFILE_MODEL` — no hardcoded Sonnet id in app code
+- Heading validation after Sonnet response: must contain `## Who I Am` AND `## Scoring Rubric`
+- If either missing: retry once with same prompt
+- Still missing after retry: return 500 `{ error: "synthesis_failed" }` — do not persist malformed profile
+- On success: insert `api_usage` with **aggregated** input/output tokens and Sonnet cost ($3/M in, $15/M out), `user_id` set
+
+**`user_profiles` upsert (synthesis + settings markdown):**
+- Always **`loadUserProfileRow(userId)`** first, then upsert with **`profile`** and **`onboarding_completed`** from that row so jsonb is never nulled by partial payloads
+
+**BUG 16 — Stale `NEXT_PUBLIC_*` in `.next` (placeholder.supabase.co):**
+- Symptom: App talks to **`placeholder.supabase.co`** or short anon JWT in client bundles even though `.env.local` has the real Supabase URL/key.
+- Root cause: **`NEXT_PUBLIC_*` is inlined at compile time**; `.next` from a run without real env (or with CI placeholder env) keeps wrong values until **`rm -rf .next`** and a clean **`npm run dev`**.
+
+**WORKING PATTERN — source broadening:** Expanded `RSS_FEEDS_BASE` to **22** feeds and `REDDIT_BASE` to **11** subreddits; broadened `HN_QUERY_DEFAULT`; set `FILTER_RAW_FETCH_LIMIT=800`, `FILTER_MAX_CANDIDATES=150`. Target: **300–400** raw stories/day vs prior **~80–150**.
+
+---
+
+## Sync reminder
+When you fix a new bug or confirm a new pattern, append it here AND in `CLAUDE.md` before ending the session.

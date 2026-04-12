@@ -79,6 +79,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   user_id               uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   profile               jsonb NOT NULL DEFAULT '{}'::jsonb,
   onboarding_completed  boolean NOT NULL DEFAULT false,
+  scoring_markdown      text,
+  questionnaire_answers jsonb,
+  synthesized_at       timestamptz,
   created_at            timestamptz NOT NULL DEFAULT now(),
   updated_at            timestamptz NOT NULL DEFAULT now()
 );

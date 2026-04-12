@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { getPublicOrigin } from '@/lib/request-origin'
+import { getSupabasePublicAnonKey, getSupabasePublicUrl } from '@/lib/supabase-public-env'
 
 export async function GET(request: Request) {
   const origin = getPublicOrigin(request)
@@ -12,8 +13,8 @@ export async function GET(request: Request) {
   if (code) {
     const cookieStore = await cookies()
     const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      getSupabasePublicUrl(),
+      getSupabasePublicAnonKey(),
       {
         cookies: {
           getAll() {

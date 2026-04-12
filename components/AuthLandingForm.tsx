@@ -2,8 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { createSupabaseBrowserClient } from '@/lib/supabase/client'
 import { resolvePostAuthPath } from '@/lib/auth/post-auth-navigation'
+import { getSupabasePublicAnonKey, getSupabasePublicUrl } from '@/lib/supabase-public-env'
 
 type Mode = 'signin' | 'signup'
 
@@ -40,22 +40,76 @@ export function AuthLandingForm() {
     setMessage('')
     setBusy(true)
 
-    const supabase = createSupabaseBrowserClient()
-    const em = email.trim()
+    const dbg = (hypothesisId: string, message: string, data: Record<string, unknown>) => {
+      const payload = {
+        sessionId: 'd9c924',
+        hypothesisId,
+        location: 'components/AuthLandingForm.tsx:handleSubmit',
+        message,
+        data,
+        timestamp: Date.now(),
+      }
+      // #region agent log
+      void fetch('/api/debug/agent-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).catch(() => {})
+      void fetch('http://127.0.0.1:7478/ingest/c448f6fb-cf2f-4029-94e1-d5bd2d673db2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'd9c924' },
+        body: JSON.stringify(payload),
+      }).catch(() => {})
+      // #endregion
+    }
+
+    const supabaseEnvProbe = () => {
+      const rawUrl = getSupabasePublicUrl()
+      let parsedHost = 'missing'
+      try {
+        if (rawUrl) parsedHost = new URL(rawUrl).host
+      } catch {
+        parsedHost = 'url_parse_error'
+      }
+      const anonLen = getSupabasePublicAnonKey().length
+      return {
+        urlDefined: rawUrl.length > 0,
+        urlHost: parsedHost,
+        urlScheme: (() => {
+          try {
+            return rawUrl ? new URL(rawUrl).protocol : 'none'
+          } catch {
+            return 'invalid'
+          }
+        })(),
+        anonKeyPresent: anonLen > 0,
+        anonKeyLengthBucket: anonLen === 0 ? '0' : anonLen < 100 ? 'short' : 'ok',
+        online: typeof navigator !== 'undefined' ? navigator.onLine : null,
+      }
+    }
 
     try {
-      if (mode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({
-          email: em,
-          password,
-        })
+      dbg('H-A', 'pre_auth_env', { mode, authTransport: 'server_api', ...supabaseEnvProbe() })
 
-        if (error) {
-          setMessage(error.message)
+      const em = email.trim()
+
+      if (mode === 'signup') {
+        const res = await fetch('/api/auth/sign-up', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: em, password }),
+        })
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; hasSession?: boolean; error?: string }
+
+        if (!res.ok) {
+          dbg('H-signup', 'sign_up_http_error', { status: res.status })
+          setMessage(typeof data.error === 'string' ? data.error : 'Could not create account')
           return
         }
 
-        if (data.session) {
+        if (data.hasSession) {
+          dbg('H-ok', 'sign_up_session', { runId: 'post-fix' })
           const next = await resolvePostAuthPath(redirectParam)
           window.location.assign(next)
           return
@@ -68,15 +122,36 @@ export function AuthLandingForm() {
         return
       }
 
-      const { error } = await supabase.auth.signInWithPassword({ email: em, password })
-      if (error) {
-        setMessage(error.message)
+      const res = await fetch('/api/auth/sign-in', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: em, password }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+
+      if (!res.ok) {
+        dbg('H-auth', 'sign_in_http_error', { status: res.status })
+        setMessage(typeof data.error === 'string' ? data.error : 'Sign in failed')
         return
       }
 
+      dbg('H-ok', 'sign_in_http_ok', { runId: 'post-fix', hasEmail: em.length > 0 })
       const next = await resolvePostAuthPath(redirectParam)
       window.location.assign(next)
       return
+    } catch (caught) {
+      const errName = caught instanceof Error ? caught.name : 'unknown'
+      const errMsg = caught instanceof Error ? caught.message : String(caught)
+      dbg('H-B', 'auth_fetch_threw', {
+        errName,
+        errMsg,
+        mode,
+        ...supabaseEnvProbe(),
+      })
+      setMessage(
+        'Network error: could not reach the app. Check that the dev server is running and try again.'
+      )
     } finally {
       setBusy(false)
     }

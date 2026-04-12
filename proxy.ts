@@ -1,13 +1,14 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { getPublicOrigin } from '@/lib/request-origin'
+import { getSupabasePublicAnonKey, getSupabasePublicUrl } from '@/lib/supabase-public-env'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    getSupabasePublicUrl(),
+    getSupabasePublicAnonKey(),
     {
       cookies: {
         getAll() {
@@ -34,9 +35,17 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(login)
   }
 
+  if (!user.email_confirmed_at) {
+    const path = request.nextUrl.pathname
+    if (path.startsWith('/verify-email')) {
+      return supabaseResponse
+    }
+    return NextResponse.redirect(new URL('/verify-email', getPublicOrigin(request)))
+  }
+
   return supabaseResponse
 }
 
 export const config = {
-  matcher: ['/feed/:path*', '/onboarding/:path*', '/settings/:path*'],
+  matcher: ['/feed/:path*', '/onboarding/:path*', '/settings/:path*', '/verify-email'],
 }

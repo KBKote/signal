@@ -12,6 +12,10 @@ export default function SettingsPage() {
   const [hasKey, setHasKey] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState('')
+  const [scoringMd, setScoringMd] = useState('')
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileMessage, setProfileMessage] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -23,6 +27,12 @@ export default function SettingsPage() {
       const data = await res.json()
       setHasKey(Boolean(data.hasAnthropicKey))
       setLoading(false)
+      const pr = await fetch('/api/settings/profile', { credentials: 'include' })
+      if (pr.ok) {
+        const pj = (await pr.json()) as { scoring_markdown?: string | null }
+        setScoringMd(typeof pj.scoring_markdown === 'string' ? pj.scoring_markdown : '')
+      }
+      setProfileLoading(false)
     })()
   }, [router])
 
@@ -46,10 +56,38 @@ export default function SettingsPage() {
     setApiKey('')
     setMessage('Saved. Your key is encrypted and only used server-side when you run the filter.')
     const st = await fetch('/api/settings/status', { credentials: 'include' }).then((r) => r.json())
-    if (!st.onboardingCompleted) {
-      router.push('/onboarding')
+    const hasProfile = Boolean(st.hasScoringProfile ?? st.onboardingCompleted)
+    if (!hasProfile) {
+      window.location.assign('/onboarding')
     } else {
-      router.push('/feed')
+      window.location.assign('/feed')
+    }
+  }
+
+  async function saveProfileMd(e: React.FormEvent) {
+    e.preventDefault()
+    setProfileMessage('')
+    if (scoringMd.length > 4000) {
+      setProfileMessage('Scoring profile must be at most 4000 characters.')
+      return
+    }
+    setProfileSaving(true)
+    const res = await fetch('/api/settings/profile', {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scoring_markdown: scoringMd }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+    setProfileSaving(false)
+    if (!res.ok) {
+      setProfileMessage(typeof data.error === 'string' ? data.error : 'Could not save profile')
+      return
+    }
+    if (data && typeof data === 'object' && 'ok' in data && data.ok === true) {
+      setProfileMessage('Saved')
+    } else {
+      setProfileMessage('Could not save profile')
     }
   }
 
@@ -129,6 +167,43 @@ export default function SettingsPage() {
         ) : null}
 
         {message ? <p className="mt-4 text-sm text-zinc-400">{message}</p> : null}
+
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <h2 className="font-serif text-xl text-zinc-50">Scoring profile (markdown)</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            This text is what Claude Haiku sees when scoring your feed (max 4000 characters). You can tune it after
+            onboarding.
+          </p>
+          {profileLoading ? (
+            <p className="mt-4 text-sm text-zinc-500">Loading profile…</p>
+          ) : (
+            <form onSubmit={saveProfileMd} className="mt-4 space-y-3">
+              <textarea
+                value={scoringMd}
+                onChange={(e) => setScoringMd(e.target.value)}
+                rows={12}
+                className="w-full rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-white/35"
+                placeholder="# Signal Profile …"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <span className={`text-xs ${scoringMd.length > 4000 ? 'text-amber-300' : 'text-zinc-500'}`}>
+                  {scoringMd.length} / 4000
+                </span>
+                <button
+                  type="submit"
+                  disabled={profileSaving || scoringMd.length > 4000}
+                  className="rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-white/15 disabled:opacity-50"
+                >
+                  {profileSaving ? 'Saving…' : 'Save scoring profile'}
+                </button>
+              </div>
+              {scoringMd.length > 4000 ? (
+                <p className="text-sm text-amber-200">Scoring profile must be at most 4000 characters before you can save.</p>
+              ) : null}
+              {profileMessage ? <p className="text-sm text-zinc-400">{profileMessage}</p> : null}
+            </form>
+          )}
+        </div>
 
         <div className="mt-8 flex flex-wrap items-center gap-3 text-sm">
           <Link href="/feed" className="font-medium text-white underline hover:text-zinc-200">

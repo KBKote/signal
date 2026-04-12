@@ -14,6 +14,7 @@ A personalized web app that scrapes the internet (RSS feeds, Reddit, Hacker News
 ## Commands
 ```bash
 npm run dev        # Start local development server (localhost:3000)
+npm run dev:fresh  # rm -rf .next then dev — use when NEXT_PUBLIC_* still shows CI placeholder after env fix (Bug 16)
 npm run tunnel     # Public HTTPS URL via Cloudflare quick tunnel (run in a second terminal; needs dev on :3000)
 npm run build      # Build for production
 npm run lint       # Run ESLint
@@ -57,7 +58,7 @@ signal/
 
 ## Architecture: How Data Flows
 ```
-[Public `/`] → product copy + Log in / Sign up → `/login` → BYOK in `/settings` → `/feed` (onboarding page optional / later)
+[Public `/`] → product copy + Log in / Sign up → `/login` → verify email → BYOK in `/settings` → `/onboarding` (scoring profile) → `/feed`
 [Supabase Auth] → session (cookie) → protected /feed, /settings, /onboarding
        ↓
 [Cron: daily on Vercel Hobby] (scrape only — filter is on-demand per user with BYOK; `vercel.json` uses `0 0 * * *` because Hobby allows at most one cron invocation per day)
@@ -84,7 +85,8 @@ Key profile attributes:
 - Noise sensitivity: HIGH — surface only what's worth acting on
 
 ## Cost Controls (IMPORTANT)
-- Use `claude-haiku-4-5-20251001` ONLY — never Sonnet or Opus for filtering
+- Use `claude-haiku-4-5-20251001` ONLY for **batch filtering** in [`lib/filter.ts`](lib/filter.ts) — never Sonnet or Opus there
+- **Sonnet allowed only for one-shot profile synthesis** via [`POST /api/onboarding/synthesize-profile`](app/api/onboarding/synthesize-profile/route.ts) — **never** in [`lib/filter.ts`](lib/filter.ts) batch loop. Uses user BYOK and **`ANTHROPIC_PROFILE_MODEL`** (required at runtime for that route; set in `.env.local` / Vercel — see `.env.local.example`). Log usage to **`api_usage`** with Sonnet pricing ($3/M input, $15/M output)
 - Always batch stories into a single prompt (never one API call per story)
 - Pre-filter by keyword BEFORE sending to Claude (halves token usage)
 - Target: < $3/month in API costs
@@ -95,9 +97,33 @@ Key profile attributes:
 - Never call Claude API per-story — always batch minimum 10 stories per call
 - Never store raw HTML in the database — strip to text only
 - Never show unscored stories in the UI — everything must pass through the filter
-- Never use Sonnet/Opus for the filtering pipeline — Haiku only
+- Never use Sonnet/Opus **inside** the filtering pipeline / `scoreBatch` — Haiku only; Sonnet is allowed **only** on the profile synthesis route above
 
 ## Claude Learning Log
+
+**Pattern — low feed count after topic emphasis:** A single hard `MIN_SCORE_TO_STORE` plus a low `MAX_CANDIDATES` default made the feed look empty even when Haiku ran. Fix: **scope-aware store floors** (`minScoreToStoreForScope`: precise 6, balanced 5, expansive 4 in [`lib/pipeline-preferences.ts`](lib/pipeline-preferences.ts)), **raise default `MAX_CANDIDATES` to 80** and **`BATCH_SIZE` to 24**, **scope-aware overlay** (do not tell expansive runs to default to noise), and align **`/api/stories`** `MIN_FEED_SCORE` to **4** so stored 4s appear. Reddit topic-pack subs still on `t=week` were moved to **`t=day`** for fresher pools.
+
+**WORKING PATTERN — gated setup (email → BYOK → `scoring_markdown`):** Centralize checks in [`lib/auth/user-setup-gates.ts`](lib/auth/user-setup-gates.ts) (`getUserSetupGates`, `nextSetupPath`, `assertUserReadyForPipeline`). [`proxy.ts`](proxy.ts) forces verified email for `/feed`, `/settings`, `/onboarding`; server layouts on feed/settings/onboarding mirror the same order; privileged APIs (`/api/filter`, `/api/stories`, reset-progress, push, user scrape) call `assertUserReadyForPipeline` so the browser cannot skip gates. Confirmed: Bug 8 pattern (server + session scoped admin queries) holds — `loadUserProfileRow` always `.eq('user_id', userId)`.
+
+**BUG 15: `getServerPostAuthDestination(userId)` could not see `email_confirmed_at`**
+- Symptom: Logged-in users skipped email verification and scoring-profile gates.
+- Root cause: Destination helper only checked BYOK via `userId`, not `User.email_confirmed_at` or `scoring_markdown`.
+- Fix: Pass full `User` into `getServerPostAuthDestination(user)`; share `getUserSetupGates` / `nextSetupPath` with client status API; add `/verify-email` and migration-backed `scoring_markdown` column for `hasScoringProfile`.
+- **Temporary:** `hasScoringProfile` is true if `scoring_markdown` is set **or** legacy `onboarding_completed` is true (old JSON onboarding before Sonnet synthesis). Tighten to markdown-only after Phase 2 migration of existing users.
+
+**WORKING PATTERN — Vitest + `@/` imports:** Use root [`vitest.config.ts`](vitest.config.ts) with `resolve.alias: { '@': path.resolve(__dirname, '.') }` so tests can import `@/lib/...` like Next.js. Run `npm run test` (Vitest `vitest run`).
+
+**WORKING PATTERN — Sonnet profile synthesis (Phase 2b):** [`POST /api/onboarding/synthesize-profile`](app/api/onboarding/synthesize-profile/route.ts) uses **only** `getDecryptedAnthropicKey(user.id)` (never `ANTHROPIC_API_KEY` for users). Instantiate `new Anthropic({ apiKey })` **inside** the request path (per Bug 2). Model id **only** from `process.env.ANTHROPIC_PROFILE_MODEL` (no hardcoded fallback in app code — route returns **503** `missing_profile_model` if unset). After Sonnet returns text, require substrings `## Who I Am` and `## Scoring Rubric`; **retry once** with the same user prompt if either is missing; if still missing, **500** `{ error: 'synthesis_failed' }` and **do not** upsert. On success: `loadUserProfileRow` then upsert `user_profiles` with existing **`profile`** + **`onboarding_completed`** preserved, set `scoring_markdown`, `questionnaire_answers`, `synthesized_at`. Insert **`api_usage`** with aggregated input/output tokens and Sonnet cost estimate ($3/M in, $15/M out). Client errors: machine keys like `add_key_first`, `verify_email_first`, `invalid_answers` + `detail` — never stack traces.
+
+**WORKING PATTERN — `user_profiles` upsert without wiping jsonb:** Before any `upsert` on `user_profiles` for synthesis or settings markdown, **`loadUserProfileRow(userId)`** and re-pass **`profile`** and **`onboarding_completed`** from the loaded row (defaults `{}` / `true` only when no row). Same `{ onConflict: 'user_id' }` pattern for PATCH scoring markdown.
+
+**BUG 16: Client shows `placeholder.supabase.co` / `fetch failed` to Supabase despite correct `.env.local`**
+- Symptom: Debug logs or `getSupabasePublicUrl()` in the browser resolve to **`placeholder.supabase.co`**; server auth returns “Could not reach Supabase…”; real keys in `.env.local` seem ignored.
+- Root cause: **Turbopack/Webpack inlines `NEXT_PUBLIC_*` at compile time.** If `.next` was produced when env was missing or set to **CI placeholders** (e.g. [`.github/workflows/ci.yml`](.github/workflows/ci.yml) `NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co`), **restarting `next dev` does not replace** those inlined values — the stale client/server chunks keep the placeholder until the cache is cleared.
+- Fix: **`rm -rf .next`** then **`npm run dev`** (from repo root), or **`npm run dev:fresh`** in [`package.json`](package.json) for the same in one command. After a clean compile with `.env.local` present, `urlHost` in logs should match your real `*.supabase.co` project.
+
+**WORKING PATTERN — source broadening:** Expanded [`RSS_FEEDS_BASE`](lib/scrape-sources.ts) to **22** feeds and [`REDDIT_BASE`](lib/scrape-sources.ts) to **11** subreddits; broadened [`HN_QUERY_DEFAULT`](lib/scrape-sources.ts); set `FILTER_RAW_FETCH_LIMIT=800`, `FILTER_MAX_CANDIDATES=150`. Target: **300–400** raw stories/day vs prior **~80–150**.
+
 - When Claude makes a mistake in code, document the exact mistake here immediately.
 - Add the failed prompt, reasoning, or pattern that produced the bug so we know not to repeat it.
 - If a fix or a working prompt/approach is found, add that too with a short note on why it worked.
@@ -194,7 +220,7 @@ Key profile attributes:
 - Root cause: client-only `MarketingOrRedirect` waited on `supabase.auth.getUser()`; when that request hung (throttled timers, flaky network, or blocked third-party calls), `checked` never flipped true.
 - Fix: **`app/page.tsx`** is a Server Component — `getSessionUser()` + `getServerPostAuthDestination()` → `redirect`, else render **`MarketingBody`** immediately (`lib/auth/post-auth-redirect-server.ts`).
 
-**Setup path (product order):** sign up / log in → **`/settings`** (Anthropic BYOK) → **`/feed`**. Optional **`/onboarding`** exists for future profile questions; not required in redirects. Implemented with `lib/auth/post-auth-navigation.ts`.
+**Setup path (product order):** sign up / log in → **`/verify-email`** (if Supabase requires confirmation) → **`/settings`** (Anthropic BYOK) → **`/onboarding`** (until `user_profiles.scoring_markdown` is set) → **`/feed`**. Implemented with `lib/auth/post-auth-navigation.ts`, `lib/auth/user-setup-gates.ts`, and server layouts under `app/feed`, `app/settings`, `app/onboarding`.
 
 **WORKING PATTERNS:**
 - Claude Haiku JSON scoring prompt: ask for a plain JSON array, no markdown fences. Then strip any accidental fences with `.replace(/^```json\s*/i, '')` before `JSON.parse`. Prevents parse failures if the model adds fences anyway.
@@ -218,7 +244,8 @@ Full schema in `supabase/schema.sql` — run this in Supabase SQL editor to crea
 
 ## Environment Variables (.env.local)
 ```
-ANTHROPIC_API_KEY=              # optional operator fallback; users use Settings (BYOK)
+ANTHROPIC_API_KEY=              # optional operator-only key for future server jobs — NEVER used as fallback for signed-in user flows (filter/synthesis always use BYOK via getDecryptedAnthropicKey)
+ANTHROPIC_PROFILE_MODEL=        # required for POST /api/onboarding/synthesize-profile (Sonnet model id, e.g. claude-sonnet-4-6)
 SECRETS_ENCRYPTION_KEY=         # required for storing user keys (openssl rand -base64 32)
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
@@ -232,9 +259,9 @@ Template is in `.env.local.example` — copy and fill in.
 
 **Optional tuning (filter + pool):**
 ```
-FILTER_RAW_FETCH_LIMIT=400     # cap 800 — raw_stories rows considered per filter run
-FILTER_MAX_CANDIDATES=36       # cap 200 — max unscored candidates scored per run
-FILTER_BATCH_SIZE=18           # cap 40 — Haiku batch size (clamped to max candidates)
+FILTER_RAW_FETCH_LIMIT=800     # cap 800 — raw_stories rows considered per filter run (Phase 4 default in .env.local)
+FILTER_MAX_CANDIDATES=150      # cap 200 — max unscored candidates scored per run
+FILTER_BATCH_SIZE=24           # cap 40 — Haiku batch size (clamped to max candidates)
 ```
 
 ## Hosted Supabase checklist (migrations)
@@ -245,6 +272,7 @@ Apply new SQL migrations in the Supabase SQL editor (or `supabase db push`) when
 - `supabase/migrations/20260411130000_filter_user_throttle.sql` — DB-backed **filter** rate limit (90s between runs per user, BYOK protection).
 - `supabase/migrations/20260411140000_api_scored_stories_page.sql` — keyset cursor pagination for `GET /api/stories` (`api_scored_stories_page` RPC).
 - `supabase/migrations/20260411150000_prune_signal_story_tables.sql` — `prune_signal_story_tables()` deletes `scored_stories` older than **7 days** and `raw_stories` older than **14 days** (run manually or schedule with **pg_cron**, e.g. weekly `SELECT public.prune_signal_story_tables();`).
+- `supabase/migrations/20260412100000_scoring_markdown.sql` — `user_profiles.scoring_markdown`, `questionnaire_answers`, `synthesized_at` (gated onboarding / Haiku scoring context).
 
 Until throttle **tables** are missing, scrape/filter rate limiters **log a warning** and allow the request (deploy order never bricks the app).
 
