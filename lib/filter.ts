@@ -22,6 +22,8 @@ function intEnv(name: string, fallback: number, cap: number): number {
 
 const RAW_FETCH_LIMIT = intEnv('FILTER_RAW_FETCH_LIMIT', 400, 800)
 const MAX_CANDIDATES = intEnv('FILTER_MAX_CANDIDATES', 80, 200)
+/** Max age in days for a story to be eligible for scoring. Stories older than this are skipped. */
+const MAX_STORY_AGE_DAYS = intEnv('FEED_MAX_AGE_DAYS', 7, 30)
 /** Avoid hanging forever if Anthropic is slow or unreachable. */
 const BATCH_TIMEOUT_MS = 120_000
 const BATCH_CONCURRENCY = 2
@@ -311,7 +313,14 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
     .in('raw_story_id', ids)
 
   const done = new Set((doneRows ?? []).map((d) => d.raw_story_id as string))
-  const candidates = raws.filter((r) => !done.has(r.id)).slice(0, maxForRun)
+  const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
+  const candidates = raws
+    .filter((r) => !done.has(r.id))
+    .filter((r) => {
+      if (!r.published_at) return true
+      return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
+    })
+    .slice(0, maxForRun)
 
   if (candidates.length === 0) {
     return {

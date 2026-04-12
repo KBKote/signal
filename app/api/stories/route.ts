@@ -5,6 +5,7 @@ import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 const ARCHIVE_HOURS = 48
+const FEED_MAX_AGE_DAYS = parseInt(process.env.FEED_MAX_AGE_DAYS ?? '7', 10) || 7
 const DEFAULT_LIMIT = 20
 const MAX_LIMIT = 80
 /** Lowest score returned in the feed — must be <= expansive pipeline store floor (4). */
@@ -78,12 +79,14 @@ async function fetchStoriesViaRest(
   cursor: StoryCursor | null
 ): Promise<{ data: ScoredStoryRow[] | null; error: PostgrestError | null }> {
   const db = getSupabaseAdmin()
+  const publishedCutoff = new Date(Date.now() - FEED_MAX_AGE_DAYS * 24 * 3_600_000).toISOString()
   let q = db
     .from('scored_stories')
     .select(STORY_COLUMNS)
     .eq('user_id', userId)
     .gte('scored_at', cutoff)
     .gte('score', MIN_FEED_SCORE)
+    .or(`published_at.is.null,published_at.gte."${publishedCutoff}"`)
 
   if (cursor) {
     q = q.or(keysetOrFilter(cursor))
@@ -116,9 +119,13 @@ export async function GET(request: Request) {
   }
 
   const cutoff = new Date(Date.now() - ARCHIVE_HOURS * 3_600_000).toISOString()
+  const publishedCutoff = new Date(Date.now() - FEED_MAX_AGE_DAYS * 24 * 3_600_000).toISOString()
 
   const fetchLimit = limit + 1
   let rows: ScoredStoryRow[] = []
+  console.log(
+    `[/api/stories] published_at freshness cutoff=${publishedCutoff} (FEED_MAX_AGE_DAYS=${FEED_MAX_AGE_DAYS}); RPC api_scored_stories_page does not apply this filter yet`
+  )
   const { data: rpcData, error: rpcError } = await getSupabaseAdmin().rpc('api_scored_stories_page', {
     p_user_id: user.id,
     p_limit: fetchLimit,
