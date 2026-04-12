@@ -282,3 +282,31 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
     matchesText: buildKeywordMatcher(supplemental),
   }
 }
+
+export const NITTER_USERNAMES: readonly string[] = [
+  'VitalikButerin',
+  'gakonst',
+  'hasufl',
+  'sassal0x',
+  'banteg',
+  'samczsun',
+  'bertcmiller',
+  'philogy',
+  'loomdart',
+  'dcbuilder0x',
+  'StaniKulechov',
+  'AndreCronjeTech',
+  'cdixon',
+  'balajis',
+  'karpathy',
+  'emollick',
+  'awilkinson',
+  'ercwl',
+  'ryanSAdams',
+  'ameensoleimani',
+  'TrustlessState',
+  'ChristineDKim',
+  '0xMaki',
+  'tarunchitra',
+  'nickbytes',
+]

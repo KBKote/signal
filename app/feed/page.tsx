@@ -69,7 +69,6 @@ export default function LiveFeedPage() {
     batches: number
   } | null>(null)
   const [hasAnthropicKey, setHasAnthropicKey] = useState(false)
-  const [resettingProgress, setResettingProgress] = useState(false)
   const [hasMoreStories, setHasMoreStories] = useState(false)
   const [storiesNextCursor, setStoriesNextCursor] = useState<string | null>(null)
   const [loadingMoreStories, setLoadingMoreStories] = useState(false)
@@ -285,32 +284,6 @@ export default function LiveFeedPage() {
     }
   }, [fetchStories, pipelinePrefs, pipelineRunTuning, hasAnthropicKey])
 
-  const resetScoringProgress = useCallback(async () => {
-    if (!hasAnthropicKey || runningPipeline || resettingProgress) return
-    if (
-      !window.confirm(
-        'Clear your scoring progress? Your feed will empty until you run the pipeline again; the next run will re-score shared stories with your current topic and scope settings.'
-      )
-    ) {
-      return
-    }
-    setResettingProgress(true)
-    setPipelineMessage('Clearing scoring progress…')
-    try {
-      const res = await fetch('/api/filter/reset-progress', { method: 'POST', credentials: 'include' })
-      if (!res.ok) {
-        const msg = await readJsonError(res, 'Could not reset progress')
-        setPipelineMessage(msg)
-        return
-      }
-      setStories([])
-      setPipelineMessage('Scoring progress cleared. Run pipeline to re-score with your preferences.')
-      void fetchStories()
-    } finally {
-      setResettingProgress(false)
-    }
-  }, [hasAnthropicKey, runningPipeline, resettingProgress, fetchStories])
-
   useEffect(() => {
     const id = window.setTimeout(() => {
       void fetchStories()
@@ -400,20 +373,6 @@ export default function LiveFeedPage() {
                 onRunTuningChange={setPipelineRunTuning}
                 disabled={runningPipeline}
               />
-              <div className="mt-4">
-                <button
-                  type="button"
-                  onClick={() => void resetScoringProgress()}
-                  disabled={runningPipeline || resettingProgress || !hasAnthropicKey}
-                  className="rounded-lg border border-white/15 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {resettingProgress ? 'Resetting…' : 'Reset scoring progress'}
-                </button>
-                <p className="mt-1.5 text-[11px] text-zinc-500">
-                  Clears your feed and scoring marks so the next run re-scores the pool. Usually unnecessary —
-                  Run Pipeline already prompts when topic or scope changed.
-                </p>
-              </div>
             </div>
 
             {!hasAnthropicKey && (
@@ -486,7 +445,7 @@ export default function LiveFeedPage() {
                       </span>
                     </div>
                     <div className="flex justify-between border-t border-white/10 pt-1.5">
-                      <span className="text-zinc-500">Stored</span>
+                      <span className="text-zinc-500">New this run</span>
                       <span className="font-medium text-zinc-200">{lastRunStats.stored} stories</span>
                     </div>
                   </div>

@@ -10,7 +10,7 @@ import {
 } from './pipeline-preferences'
 import { getSupabaseAdmin } from './supabase-server'
 
-const MODEL = 'claude-haiku-4-5-20251001'
+const MODEL = process.env.ANTHROPIC_HAIKU_MODEL ?? 'claude-haiku-4-5-20251001'
 
 function intEnv(name: string, fallback: number, cap: number): number {
   const raw = process.env[name]?.trim()
@@ -150,6 +150,7 @@ interface ScoredResult {
   id: string
   score: number
   category: 'opportunity' | 'idea' | 'intel' | 'noise'
+  title: string
   why: string
   summary: string
 }
@@ -197,8 +198,11 @@ Each object must have:
 - "id": the story id (string, unchanged)
 - "score": integer 1-10
 - "category": one of "opportunity", "idea", "intel", "noise"
-- "why": one sentence explaining the score relative to the user's goals and the run focus
-- "summary": two sentences plain-English summary of what the story is about
+- "title": at most 8 words clean headline rewriting the story title (hard cap; drop usernames, RT prefixes, URLs)
+- "why": at most 12 words explaining the score relative to the user's goals and the run focus (hard cap; omit filler)
+- "summary": at most 20 words plain-English summary of what the story is about (hard cap; no bullet points)
+
+Never exceed the word caps; shorten aggressively if a draft runs long.
 
 Stories to score:
 ${JSON.stringify(storiesPayload, null, 2)}`
@@ -397,7 +401,7 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
           toInsert.push({
             user_id: ctx.userId,
             raw_story_id: story.id,
-            title: story.title,
+            title: r.title?.trim() || story.title,
             url: story.url,
             source: story.source,
             published_at: story.published_at,

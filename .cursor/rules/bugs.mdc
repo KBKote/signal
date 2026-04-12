@@ -164,6 +164,48 @@ alwaysApply: true
 
 **WORKING PATTERN — source broadening:** Expanded `RSS_FEEDS_BASE` to **22** feeds and `REDDIT_BASE` to **11** subreddits; broadened `HN_QUERY_DEFAULT`; set `FILTER_RAW_FETCH_LIMIT=800`, `FILTER_MAX_CANDIDATES=150`. Target: **300–400** raw stories/day vs prior **~80–150**.
 
+**WORKING PATTERN — Nitter RSS scraping:** `lib/scraper/nitter.ts` uses `rss-parser` (no new packages) with a curated list of accounts in `NITTER_USERNAMES` (`lib/scrape-sources.ts`) and 3 fallback instance origins. `Promise.allSettled` per username with per-instance `try/catch`. `source` field: `twitter/<username>` (lowercase slug). **NOTE:** Nitter public instance uptime is unreliable — `nitter: 0` in `/api/scrape` breakdown means all instances were down or unreachable, not a code bug.
+
+**WORKING PATTERN — scoreBatch output word caps:** `why` capped at 12 words, `summary` at 20 words with a "shorten aggressively" instruction. Estimated 30-40% reduction in output tokens per run. No downstream breakage — FeedCard renders these as plain text with no minimum length; schema columns are `text` with no length constraint.
+
+**WORKING PATTERN — production build:** `npm run build` → **`next build --webpack`** in `package.json` for reliable CI/local builds when Turbopack hit intermittent ENOENT on `.next` manifest paths.
+
+**WORKING PATTERN — DitheringShader WebGL2:** `getContext('webgl2')` on the inner `<canvas>`, not the wrapper `<div>` (`components/ui/dithering-shader.tsx`).
+
+**WORKING PATTERN — DitheringShader page backgrounds:** `components/ui/dithering-shader.tsx` (raw WebGL2, no Three.js, no `cn` import) wrapped by `components/ui/page-background.tsx` (`fixed`, `inset-0`, `z-[-1]`, `pointer-events-none`). ResizeObserver keeps canvas size and viewport in sync. Presets: feed = `ripple`, onboarding = `swirl`, login + verify-email = `simplex`; monochrome **#010101–#202020**. Settings: add `PageBackground` with `shape="warp"` manually when settings page work is done.
+
+**WORKING PATTERN — Settings overhaul routes:** `GET /api/settings/anthropic/test` — session → email → BYOK decrypt; Haiku `messages.create` with `max_tokens: 1` as a key probe; **no** `api_usage` row; **no** `ANTHROPIC_API_KEY`. `GET /api/settings/last-run` — newest `api_usage` for `user_id` only. `GET /api/settings/profile` returns `questionnaire_answers` + `synthesized_at` for redo of `POST /api/onboarding/synthesize-profile`. Reset scoring progress UI only on Settings (danger zone); feed page keeps pipeline-driven reset when prefs change.
+
+**WORKING PATTERN — remember-me cookie extension:** Pass `rememberMe: boolean` in `POST /api/auth/sign-in` body; in `setAll`, merge `maxAge: 30 * 24 * 60 * 60` into each cookie’s options when `o?.rememberMe === true`. Default (unchecked) passes options through unchanged. **NOTE:** Actual 30-day session requires Supabase dashboard **Refresh Token Expiry** (Auth → Sessions) set to 30 days as well.
+
+**OBSERVATION — `next build` SIGKILL in low-memory sandboxes:** Lint can pass while `next build` is terminated by the host; verify builds on a normal machine or well-provisioned CI.
+
+---
+
+---
+
+### Security / performance batch (2026-04-12)
+
+**SECURITY — FeedCard `safeHref()`:** validates `story.url` to `http:` / `https:` only; `#` for anything else.
+
+**SECURITY — `lib/trusted-origin.ts`:** last-resort fallback returns `/` not raw user input.
+
+**SECURITY — CSRF:** `validateCsrfOrigin()` in `lib/csrf.ts` added to anthropic (POST/DELETE), reset-progress (POST), and synthesize-profile (POST).
+
+**SECURITY — Auth brute-force:** `checkAuthRateLimit()` uses DB function `check_auth_rate_limit`; 10 attempts per 5min window, 15min block. Fail-open if migration not applied.
+
+**PERF — HN scraper:** AbortController 10s timeout matching rss-parser.
+
+**PERF — `lib/notifications.ts`:** N+1 per-story DB writes replaced with single batch update + delete after the story loop.
+
+**PERF / CORRECTNESS — Atomic rate limits:** `take_filter_rate_slot` / `take_scrape_rate_slot` RPCs replace SELECT + UPSERT for filter/scrape throttles.
+
+**CONFIG — `lib/filter.ts`:** `MODEL` reads `ANTHROPIC_HAIKU_MODEL` env with hardcoded fallback.
+
+**NOTE — Migrations `20260412200000` and `20260412210000`:** must be applied in Supabase SQL editor before rate limit and auth protection are active.
+
+**Intentionally NOT fixed:** DB transactions across filter writes; encryption key rotation; Zod schema validation; observability. Parse-fail marking in filter pipeline audited — not a bug.
+
 ---
 
 ## Sync reminder

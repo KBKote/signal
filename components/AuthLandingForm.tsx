@@ -32,6 +32,7 @@ export function AuthLandingForm() {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -126,7 +127,7 @@ export function AuthLandingForm() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: em, password }),
+        body: JSON.stringify({ email: em, password, rememberMe }),
       })
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
 
@@ -235,6 +236,20 @@ export function AuthLandingForm() {
             placeholder="At least 6 characters"
           />
         </div>
+        {mode === 'signin' ? (
+          <div className="flex items-center gap-2.5">
+            <input
+              id="auth-remember-me"
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="size-4 shrink-0 rounded border-white/20 bg-zinc-950 accent-white"
+            />
+            <label htmlFor="auth-remember-me" className="text-sm text-zinc-400 select-none cursor-pointer">
+              Keep me logged in
+            </label>
+          </div>
+        ) : null}
         <button
           type="submit"
           disabled={busy}

@@ -7,6 +7,7 @@ import {
   buildSynthesisPrompt,
   synthesisOutputHasRequiredHeadings,
 } from '@/lib/profile-synthesis-prompt'
+import { validateCsrfOrigin } from '@/lib/csrf'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 import { getDecryptedAnthropicKey } from '@/lib/user-credentials'
 import { loadUserProfileRow } from '@/lib/user-profiles-db'
@@ -60,6 +61,10 @@ export async function POST(req: Request) {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  if (!validateCsrfOrigin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   let answers

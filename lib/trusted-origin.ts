@@ -64,6 +64,6 @@ export function resolveRedirectOrigin(candidate: string, requestUrlForFallback: 
   try {
     return new URL(requestUrlForFallback).origin
   } catch {
-    return normCandidate
+    return '/'
   }
 }

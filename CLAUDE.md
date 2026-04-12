@@ -16,7 +16,7 @@ A personalized web app that scrapes the internet (RSS feeds, Reddit, Hacker News
 npm run dev        # Start local development server (localhost:3000)
 npm run dev:fresh  # rm -rf .next then dev — use when NEXT_PUBLIC_* still shows CI placeholder after env fix (Bug 16)
 npm run tunnel     # Public HTTPS URL via Cloudflare quick tunnel (run in a second terminal; needs dev on :3000)
-npm run build      # Build for production
+npm run build      # Build for production (`next build --webpack` — stable vs intermittent Turbopack ENOENT on manifests in some environments)
 npm run lint       # Run ESLint
 npx supabase start # Start local Supabase instance (if using local dev)
 ```
@@ -124,6 +124,8 @@ Key profile attributes:
 
 **WORKING PATTERN — source broadening:** Expanded [`RSS_FEEDS_BASE`](lib/scrape-sources.ts) to **22** feeds and [`REDDIT_BASE`](lib/scrape-sources.ts) to **11** subreddits; broadened [`HN_QUERY_DEFAULT`](lib/scrape-sources.ts); set `FILTER_RAW_FETCH_LIMIT=800`, `FILTER_MAX_CANDIDATES=150`. Target: **300–400** raw stories/day vs prior **~80–150**.
 
+**WORKING PATTERN — Nitter RSS scraping:** [`lib/scraper/nitter.ts`](lib/scraper/nitter.ts) uses `rss-parser` (no new packages) with a curated list of accounts in [`NITTER_USERNAMES`](lib/scrape-sources.ts) and three fallback instance origins in `NITTER_INSTANCE_ORIGINS`. `Promise.allSettled` per username with per-instance `try/catch` on `parser.parseURL`; `source` field: `twitter/<username>` (lowercase slug). Wired in [`POST/GET /api/scrape`](app/api/scrape/route.ts) as a fourth parallel collector; response `breakdown.nitter`. **NOTE:** Public Nitter instance uptime is unreliable — `breakdown.nitter === 0` with per-instance logs means hosts were down or blocked, not necessarily a code bug.
+
 **WORKING PATTERN — Haiku batch JSON recovery and throughput:** [`lib/filter.ts`](lib/filter.ts) runs **two** `scoreBatch` calls in parallel per wave (`BATCH_CONCURRENCY = 2`). **`max_tokens: 8192`** avoids truncating large batches (~30 items × long summaries). Parsing uses **`tryParseScoredArray`**: direct `JSON.parse`, unwrap common object wrappers (`stories`, `results`, `items`, `scores`), then **`extractJsonArrayStringAware`** so brackets inside JSON strings do not break depth counting. On failure, log **`stop_reason`** and **`output_tokens`**, and surface **`parseFailureBatchIndices`** in [`app/api/filter/route.ts`](app/api/filter/route.ts). Keep **`runFilterPipeline`** return shape in sync with that route or TypeScript build fails.
 
 **WORKING PATTERN — feed freshness (`published_at`):** Env **`FEED_MAX_AGE_DAYS`** (default **7**, cap **30** in filter via `intEnv`): [`lib/filter.ts`](lib/filter.ts) skips raw candidates older than the window (missing **`published_at`** still scores). [`app/api/stories/route.ts`](app/api/stories/route.ts) applies the same window on the **REST** path with **`.or(published_at.is.null,published_at.gte…)`**; **`api_scored_stories_page`** RPC does not yet filter by `published_at` — server logs note the gap until a migration extends the RPC.
@@ -132,18 +134,32 @@ Key profile attributes:
 
 **WORKING PATTERN — token usage panel:** [`app/feed/page.tsx`](app/feed/page.tsx) reads `totalInputTokens`, `totalOutputTokens`, `estimatedCost`, `stored` from the `/api/filter` JSON response and stores in `lastRunStats` state. Displayed in the right sidebar panel below "Stories loaded" and "Last update". Only appears after the first pipeline run (state starts null).
 
+**WORKING PATTERN — remember-me cookie extension:** Pass `rememberMe: boolean` in `POST /api/auth/sign-in` body from [`components/AuthLandingForm.tsx`](components/AuthLandingForm.tsx) (sign-in mode only; default unchecked). In [`app/api/auth/sign-in/route.ts`](app/api/auth/sign-in/route.ts), `strictRemember = o?.rememberMe === true`; in `createServerClient`’s `setAll`, merge `maxAge: 30 * 24 * 60 * 60` into each cookie’s `options` when true; otherwise pass `options` unchanged so default behavior matches prior sign-in. **NOTE:** A full 30-day session also requires Supabase dashboard **Refresh Token Expiry** (Auth → Sessions) to be at least 30 days; cookie `maxAge` alone only controls how long the browser keeps the session cookies.
+
+**WORKING PATTERN — Settings page APIs (`app/api/settings/`):** [`GET /api/settings/anthropic/test`](app/api/settings/anthropic/test/route.ts) — guard order: `getSessionUser` → 401, `isEmailVerified` → 403 `verify_email_first`, `getDecryptedAnthropicKey` → 400 `add_key_first`; `new Anthropic({ apiKey })` only inside the handler; one Haiku call (`claude-haiku-4-5-20251001`, `max_tokens: 1`, user content `ping`); success `{ ok: true }`; Anthropic/network errors → **502** `{ error: message }`; **never** insert into `api_usage` (probe only). [`GET /api/settings/last-run`](app/api/settings/last-run/route.ts) — same auth/email gates; `getSupabaseAdmin().from('api_usage')` scoped `.eq('user_id', user.id)`, newest `run_at`; `{ lastRun: null }` when empty (200). [`GET /api/settings/profile`](app/api/settings/profile/route.ts) also returns `questionnaire_answers` and `synthesized_at` so the client can `POST /api/onboarding/synthesize-profile` with the stored JSON to redo Sonnet synthesis, then re-fetch profile for the textarea. **Reset scoring progress** lives only on Settings in the red danger zone; [`app/feed/page.tsx`](app/feed/page.tsx) no longer exposes that button.
+
+**OBSERVATION — `next build` killed in constrained environments:** A full `next build` may exit with **137/143** (SIGKILL/SIGTERM) when the host enforces low memory or short timeouts (e.g. agent sandbox). `npm run lint` succeeding is the minimum gate in those environments; confirm `npm run build` on a normal dev machine or CI with adequate resources.
+
+**WORKING PATTERN — scoreBatch output word caps:** `why` capped at 12 words, `summary` at 20 words with a "shorten aggressively" instruction in [`lib/filter.ts`](lib/filter.ts) `scoreBatch`. Estimated 30-40% reduction in output tokens per run. No downstream breakage — FeedCard renders these as plain text with no minimum length; schema columns are `text` with no length constraint.
+
+**WORKING PATTERN — production `npm run build`:** [`package.json`](package.json) uses **`next build --webpack`** so CI and local builds complete reliably; default Turbopack `next build` sometimes failed with **ENOENT** on under-construction manifest paths in `.next/`.
+
+**WORKING PATTERN — DitheringShader WebGL2:** [`components/ui/dithering-shader.tsx`](components/ui/dithering-shader.tsx) must call **`canvas.getContext('webgl2', …)`** on the appended `<canvas>`, not on the wrapper `<div>` — fixes TypeScript (`HTMLDivElement` has no `getContext`) and matches the browser API.
+
+**WORKING PATTERN — DitheringShader page backgrounds:** [`components/ui/dithering-shader.tsx`](components/ui/dithering-shader.tsx) (raw WebGL2, no Three.js, no `cn` import) wrapped by [`components/ui/page-background.tsx`](components/ui/page-background.tsx) (`fixed`, `inset-0`, `z-[-1]`, `pointer-events-none`). **ResizeObserver** on the container resizes the canvas and `gl.viewport` to match. Per-page shape presets: **feed** = `ripple`, **onboarding** = `swirl`, **login / verify-email** = `simplex`. Colors stay monochrome in the **#010101–#202020** range to match Signal’s zero-accent palette. **`app/settings/page.tsx`:** add `<PageBackground shape="warp" colorBack="#010101" colorFront="#181818" pxSize={7} speed={0.15} />` manually after the settings UX agent finishes (avoid merge conflicts).
+
 **OBSERVATION — topic mode UX problem:** Topic modes (Macro & Markets, Developer & Infra, etc.) only produce good results if the raw story pool contains matching content. The pool is currently AI/crypto-heavy (22 RSS feeds + 11 subreddits all in that niche). Switching to "Macro & Markets" correctly penalizes AI stories but finds almost no macro content to surface — returns 1-13 stories of wrong type. **Decision pending:** may remove topic mode selector entirely and rely solely on `scoring_markdown` for personalization, keeping only scope (precise/balanced/expansive). Do not add more topic modes without first adding matching sources.
 
 **OBSERVATION — pool depletion pattern:** `user_raw_scored` permanently marks every scored story. After multiple pipeline runs, the candidate pool empties and runs return 0-5 stories even with Deep budget. Fix: run the scraper first (Step 1 of pipeline) to replenish `raw_stories` with fresh content before scoring. This is expected behavior, not a bug.
 
-**OBSERVATION — token cost breakdown:** Output tokens are 5× more expensive than input ($4/M vs $0.80/M). For a standard run (~26K input + ~15K output), output is 74% of cost. Highest-ROI optimization: tighten `why` to max 12 words and `summary` to max 20 words in the `scoreBatch` prompt. Estimated saving: 30-40% on output tokens, bringing standard run from ~$0.08 to ~$0.04-0.05. Not yet implemented.
+**OBSERVATION — token cost breakdown:** Output tokens are 5× more expensive than input ($4/M vs $0.80/M). For a standard run (~26K input + ~15K output), output is 74% of cost. **`scoreBatch` word caps** (see working pattern above) target that cost; re-measure `totalOutputTokens` after deploy to confirm savings.
 
 **ROADMAP — next session priorities:**
 1. **Nitter Twitter integration** — scrape curated list of 20-30 high-signal crypto/MEV/DeFi accounts via Nitter RSS (free, no API key). Use multiple fallback Nitter instances. Wire into existing RSS scraper infrastructure. Topic-specific account packs. Goal: catch opportunities like the Polymarket 12-second delay that surface on Twitter 2-3 days before RSS/Reddit.
-2. **Settings page UX overhaul** — edit `scoring_markdown` in a textarea (no file editing), redo questionnaire button (re-runs Sonnet synthesis), danger zone section (move "Reset scoring progress" here from feed), last run summary, source counts display, Anthropic key test button.
-3. **"Keep me logged in"** checkbox on login form — default 24h session expiry, opt-in 30-day. Requires Supabase session config change + `signInWithPassword` options.
+2. ~~**Settings page UX overhaul**~~ — shipped: test key (`GET /api/settings/anthropic/test`), last run (`GET /api/settings/last-run`), extended profile GET, redo synthesis, source counts, danger-zone reset (removed from feed).
+3. **"Keep me logged in"** — implemented: sign-in-only checkbox → `POST /api/auth/sign-in` with `rememberMe`; route extends Supabase SSR cookie `maxAge` to 30 days when checked. Align Supabase **Refresh Token Expiry** in Auth → Sessions for a true 30-day refresh window.
 4. **Visual shader consistency** — carry the radial gradient blob from the home page through feed and settings pages. Different direction/color per page for variety.
-5. **Token efficiency** — tighten `why` and `summary` word limits in scoring prompt (see observation above).
+5. **Token efficiency** — implemented in `scoreBatch` (see working pattern above).
 6. **Custom SMTP** — configure a third-party SMTP provider (e.g. Resend, Postmark, or SendGrid) in Supabase Auth settings to replace the built-in mailer. Goal: lift the Supabase free-tier email limits (3 emails/hour) so verification and magic-link emails are reliable at scale.
 
 - When Claude makes a mistake in code, document the exact mistake here immediately.
@@ -268,6 +284,7 @@ Full schema in `supabase/schema.sql` — run this in Supabase SQL editor to crea
 ```
 ANTHROPIC_API_KEY=              # optional operator-only key for future server jobs — NEVER used as fallback for signed-in user flows (filter/synthesis always use BYOK via getDecryptedAnthropicKey)
 ANTHROPIC_PROFILE_MODEL=        # required for POST /api/onboarding/synthesize-profile (Sonnet model id, e.g. claude-sonnet-4-6)
+ANTHROPIC_HAIKU_MODEL=          # optional override for batch filtering in lib/filter.ts (blank = built-in default Haiku id)
 SECRETS_ENCRYPTION_KEY=         # required for storing user keys (openssl rand -base64 32)
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
@@ -296,6 +313,8 @@ Apply new SQL migrations in the Supabase SQL editor (or `supabase db push`) when
 - `supabase/migrations/20260411140000_api_scored_stories_page.sql` — keyset cursor pagination for `GET /api/stories` (`api_scored_stories_page` RPC).
 - `supabase/migrations/20260411150000_prune_signal_story_tables.sql` — `prune_signal_story_tables()` deletes `scored_stories` older than **7 days** and `raw_stories` older than **14 days** (run manually or schedule with **pg_cron**, e.g. weekly `SELECT public.prune_signal_story_tables();`).
 - `supabase/migrations/20260412100000_scoring_markdown.sql` — `user_profiles.scoring_markdown`, `questionnaire_answers`, `synthesized_at` (gated onboarding / Haiku scoring context).
+- `supabase/migrations/20260412200000_atomic_rate_limit.sql` — atomic RPCs `take_filter_rate_slot` / `take_scrape_rate_slot` (TOCTOU-safe per-user throttle).
+- `supabase/migrations/20260412210000_auth_rate_limit.sql` — `auth_rate_limit` table + `check_auth_rate_limit` RPC (sign-in/sign-up brute-force protection).
 
 Until throttle **tables** are missing, scrape/filter rate limiters **log a warning** and allow the request (deploy order never bricks the app).
 
@@ -316,3 +335,29 @@ This project uses specialized Claude sub-agents defined in `.claude/agents/`:
 Invoke a sub-agent by saying: "Act as the scraper agent" or use the slash commands (`/scrape`, `/brief`, `/audit`, etc.).
 
 **Cursor:** the same audit workflow is available as the project skill `security-performance-audit` under `.cursor/skills/`.
+
+---
+
+### Security / performance batch (2026-04-12)
+
+**SECURITY — FeedCard `safeHref()`:** validates `story.url` to `http:` / `https:` only; `#` for anything else (blocks `javascript:` injection in `href`).
+
+**SECURITY — `lib/trusted-origin.ts`:** last-resort fallback in `resolveRedirectOrigin` returns `/` instead of raw user-supplied `normCandidate` (open-redirect hardening).
+
+**SECURITY — CSRF:** `validateCsrfOrigin()` in `lib/csrf.ts`; applied immediately after JSON body parse (or at handler start when there is no body) on `POST`/`DELETE` `/api/settings/anthropic`, `POST` `/api/filter/reset-progress`, and `POST` `/api/onboarding/synthesize-profile`. Not added to public auth routes.
+
+**SECURITY — Auth brute-force:** `checkAuthRateLimit()` in `lib/auth-rate-limit.ts` calls RPC `check_auth_rate_limit` (migration `20260412210000_auth_rate_limit.sql`): 10 attempts per 5-minute window, 15-minute block. Fail-open if the RPC/table is missing or the DB errors.
+
+**PERF — HN scraper:** `AbortController` + 10s timeout on Algolia `fetch`, matching RSS timeout expectations.
+
+**PERF — `lib/notifications.ts`:** N+1 per-story `scored_stories` updates and `push_subscriptions` deletes replaced with one batch `.in('id', sentIds)` update and one batch `.in('endpoint', …)` delete after the story loop (deduped endpoints).
+
+**PERF / CORRECTNESS — Atomic rate limits:** `take_filter_rate_slot` / `take_scrape_rate_slot` RPCs (migration `20260412200000_atomic_rate_limit.sql`) replace SELECT-then-UPSERT for filter/scrape throttles to remove TOCTOU races. Client falls back with a warning if RPC is missing.
+
+**CONFIG — `lib/filter.ts`:** `MODEL` reads `process.env.ANTHROPIC_HAIKU_MODEL` with the previous Haiku id as fallback.
+
+**NOTE — Migrations `20260412200000` and `20260412210000`:** apply in the Supabase SQL editor (or `supabase db push`) before atomic throttle and auth rate-limit behavior is live in production.
+
+**Intentionally NOT fixed (this pass):** DB transactions across filter writes (#8); encryption key rotation (#4); Zod schema validation (#11); observability (#12). Parse-fail marking in the filter pipeline was audited — not a bug (`if (!r) continue` skips `markRows` for unscored rows).
+
+---

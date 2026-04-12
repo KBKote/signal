@@ -7,40 +7,24 @@ const MIN_INTERVAL_MS = 120_000
  */
 export async function takeScrapeRateSlotDb(userId: string): Promise<string | null> {
   const db = getSupabaseAdmin()
-  const now = Date.now()
-  const nowIso = new Date(now).toISOString()
 
-  const { data: row, error: selErr } = await db
-    .from('scrape_user_throttle')
-    .select('last_scrape_at')
-    .eq('user_id', userId)
-    .maybeSingle()
+  const { data: allowed, error: rpcErr } = await db.rpc('take_scrape_rate_slot', {
+    p_user_id: userId,
+    p_min_interval_ms: MIN_INTERVAL_MS,
+  })
 
-  if (selErr) {
-    const m = (selErr.message ?? '').toLowerCase()
-    if (m.includes('scrape_user_throttle') || m.includes('schema cache') || m.includes('does not exist')) {
-      console.warn('[scrape-rate-limit] table missing; run migration. Allowing scrape.', selErr.message)
+  if (rpcErr) {
+    const m = (rpcErr.message ?? '').toLowerCase()
+    if (m.includes('take_scrape_rate_slot') || m.includes('does not exist')) {
+      console.warn('[scrape-rate-limit] RPC missing; run migration. Allowing.')
       return null
     }
-    console.error('[scrape-rate-limit] select:', selErr.message)
+    console.error('[scrape-rate-limit] rpc:', rpcErr.message)
     return null
   }
 
-  if (row?.last_scrape_at) {
-    const prev = new Date(row.last_scrape_at as string).getTime()
-    if (Number.isFinite(prev) && now - prev < MIN_INTERVAL_MS) {
-      const waitSec = Math.ceil((MIN_INTERVAL_MS - (now - prev)) / 1000)
-      return `Wait ${waitSec}s before running scrape again.`
-    }
-  }
-
-  const { error: upErr } = await db
-    .from('scrape_user_throttle')
-    .upsert({ user_id: userId, last_scrape_at: nowIso }, { onConflict: 'user_id' })
-
-  if (upErr) {
-    console.error('[scrape-rate-limit] upsert:', upErr.message)
-    return null
+  if (allowed === false) {
+    return `Please wait before running the scrape again.`
   }
 
   return null

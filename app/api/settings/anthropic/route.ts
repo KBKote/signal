@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
 import { isEmailVerified } from '@/lib/auth/user-setup-gates'
+import { validateCsrfOrigin } from '@/lib/csrf'
 import { encryptSecret } from '@/lib/crypto-user-secrets'
 import { isPlausibleAnthropicKey } from '@/lib/user-credentials'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
@@ -19,6 +20,10 @@ export async function POST(req: Request) {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  if (!validateCsrfOrigin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
@@ -54,7 +59,11 @@ export async function POST(req: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  if (!validateCsrfOrigin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const user = await getSessionUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

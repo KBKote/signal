@@ -21,16 +21,28 @@ export interface Story {
 const CATEGORY_STYLES = {
   opportunity: {
     label: 'Opportunity',
-    badge: 'border-white/15 bg-white/5 text-zinc-200',
+    badge: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
   },
   idea: {
     label: 'Idea',
-    badge: 'border-white/15 bg-white/5 text-zinc-200',
+    badge: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
   },
   intel: {
     label: 'Intel',
-    badge: 'border-white/15 bg-white/5 text-zinc-200',
+    badge: 'border-white/15 bg-white/5 text-zinc-300',
   },
+}
+
+function formatSource(source: string): string {
+  if (source.startsWith('twitter/')) return `@${source.slice('twitter/'.length)}`
+  if (source.startsWith('r/')) return source
+  // strip trailing slug from RSS domains like "unchainedcrypto.com/feed" → "unchainedcrypto.com"
+  try {
+    const url = new URL(source.includes('://') ? source : `https://${source}`)
+    return url.hostname.replace(/^www\./, '')
+  } catch {
+    return source
+  }
 }
 
 function ScoreBadge({ score }: { score: number }) {
@@ -62,6 +74,15 @@ function timeAgo(dateStr: string | null): string {
   return `${m}m ago`
 }
 
+function safeHref(url: string): string {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'https:' || protocol === 'http:' ? url : '#'
+  } catch {
+    return '#'
+  }
+}
+
 export const FeedCard = memo(function FeedCard({ story }: { story: Story }) {
   const [expanded, setExpanded] = useState(false)
   const cat = CATEGORY_STYLES[story.category]
@@ -78,7 +99,7 @@ export const FeedCard = memo(function FeedCard({ story }: { story: Story }) {
             <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${cat.badge}`}>
               {cat.label}
             </span>
-            <span className="font-mono text-xs text-zinc-400">{story.source}</span>
+            <span className="font-mono text-xs text-zinc-400">{formatSource(story.source)}</span>
             <span className="font-mono text-xs text-zinc-500">
               {timeAgo(story.published_at ?? story.scored_at)}
             </span>
@@ -86,7 +107,7 @@ export const FeedCard = memo(function FeedCard({ story }: { story: Story }) {
 
           <h2 className="mb-2 font-medium leading-snug text-zinc-50">
             <a
-              href={story.url}
+              href={safeHref(story.url)}
               target="_blank"
               rel="noopener noreferrer"
               className="transition hover:text-white hover:underline"

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { scrapeAccessDeniedResponse } from '@/lib/scrape-auth'
 import { runRetentionCleanup } from '@/lib/db-cleanup'
 import { DEFAULT_PIPELINE_PREFS, parsePipelinePreferencesBody } from '@/lib/pipeline-preferences'
-import { getScrapePack } from '@/lib/scrape-sources'
+import { getScrapePack, NITTER_USERNAMES } from '@/lib/scrape-sources'
+import { scrapeNitterAccounts } from '@/lib/scraper/nitter'
 import { scrapeRssFeeds } from '@/lib/scraper/rss'
 import { scrapeReddit } from '@/lib/scraper/reddit'
 import { scrapeHackerNews } from '@/lib/scraper/hn'
@@ -36,13 +37,14 @@ export async function POST(request: Request) {
   try {
     // 1. Collect from all sources in parallel (reach widens by topic)
     console.log('[Scrape] Starting data collection...')
-    const [rssStories, redditStories, hnStories] = await Promise.all([
+    const [rssStories, redditStories, hnStories, nitterStories] = await Promise.all([
       scrapeRssFeeds(pack.rssFeeds, pack.matchesText),
       scrapeReddit(pack.subreddits, pack.matchesText),
       scrapeHackerNews(pack.hnQuery, pack.matchesText),
+      scrapeNitterAccounts(NITTER_USERNAMES, pack.matchesText),
     ])
 
-    const allStories = [...rssStories, ...redditStories, ...hnStories]
+    const allStories = [...rssStories, ...redditStories, ...hnStories, ...nitterStories]
     console.log(`[Scrape] Collected ${allStories.length} stories total`)
 
     if (allStories.length === 0) {
@@ -96,6 +98,7 @@ export async function POST(request: Request) {
         rss: rssStories.length,
         reddit: redditStories.length,
         hn: hnStories.length,
+        nitter: nitterStories.length,
       },
       cleanup: cleanup ?? undefined,
     })

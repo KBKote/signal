@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' next dev",
     "dev:fresh": "rm -rf .next && NODE_OPTIONS='--dns-result-order=ipv4first' next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "NODE_OPTIONS='--dns-result-order=ipv4first' next start",
     "lint": "eslint",
     "test": "vitest run",

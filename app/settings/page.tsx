@@ -4,6 +4,51 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
+import { REDDIT_BASE, RSS_FEEDS_BASE } from '@/lib/scrape-sources'
+
+type LastRunPayload = {
+  run_at: string
+  input_tokens: number | null
+  output_tokens: number | null
+  estimated_cost: number | string | null
+  stories_scored: number | null
+} | null
+
+function formatUsd4(n: number | string | null | undefined): string {
+  const x = typeof n === 'string' ? Number.parseFloat(n) : typeof n === 'number' ? n : Number.NaN
+  if (!Number.isFinite(x)) return '$0.0000'
+  return `$${x.toFixed(4)}`
+}
+
+function mapTestKeyError(error: string): string {
+  switch (error) {
+    case 'verify_email_first':
+      return 'Verify your email first.'
+    case 'add_key_first':
+      return 'Save an API key first.'
+    default:
+      return error
+  }
+}
+
+function mapSynthErrorKey(error: string, detail?: string): string {
+  switch (error) {
+    case 'add_key_first':
+      return 'Add your Anthropic API key in Settings first.'
+    case 'verify_email_first':
+      return 'Verify your email before re-running synthesis.'
+    case 'missing_profile_model':
+      return 'Profile synthesis is not configured on the server (missing ANTHROPIC_PROFILE_MODEL).'
+    case 'synthesis_failed':
+      return 'Synthesis did not produce a valid profile. Try again or update your answers in Onboarding.'
+    case 'synthesis_request_failed':
+      return 'Could not reach Anthropic. Check your key and try again.'
+    case 'invalid_answers':
+      return detail ? `Invalid questionnaire data: ${detail}` : 'Stored questionnaire answers are invalid. Re-do onboarding.'
+    default:
+      return error
+  }
+}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -12,27 +57,58 @@ export default function SettingsPage() {
   const [hasKey, setHasKey] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [message, setMessage] = useState('')
+  const [testingKey, setTestingKey] = useState(false)
+  const [testMessage, setTestMessage] = useState('')
   const [scoringMd, setScoringMd] = useState('')
   const [profileLoading, setProfileLoading] = useState(true)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileMessage, setProfileMessage] = useState('')
+  const [questionnaireAnswers, setQuestionnaireAnswers] = useState<unknown>(null)
+  const [lastRun, setLastRun] = useState<LastRunPayload>(null)
+  const [lastRunLoading, setLastRunLoading] = useState(true)
+  const [synthesizing, setSynthesizing] = useState(false)
+  const [synthMessage, setSynthMessage] = useState('')
+  const [resettingProgress, setResettingProgress] = useState(false)
+  const [resetMessage, setResetMessage] = useState('')
 
   useEffect(() => {
     void (async () => {
-      const res = await fetch('/api/settings/status', { credentials: 'include' })
-      if (res.status === 401) {
+      const [stRes, prRes, lrRes] = await Promise.all([
+        fetch('/api/settings/status', { credentials: 'include' }),
+        fetch('/api/settings/profile', { credentials: 'include' }),
+        fetch('/api/settings/last-run', { credentials: 'include' }),
+      ])
+
+      if (stRes.status === 401) {
         router.replace('/login?redirect=/settings')
         return
       }
-      const data = await res.json()
-      setHasKey(Boolean(data.hasAnthropicKey))
-      setLoading(false)
-      const pr = await fetch('/api/settings/profile', { credentials: 'include' })
-      if (pr.ok) {
-        const pj = (await pr.json()) as { scoring_markdown?: string | null }
+
+      const data = await stRes.json().catch(() => ({}))
+      setHasKey(Boolean((data as { hasAnthropicKey?: boolean }).hasAnthropicKey))
+
+      if (prRes.ok) {
+        const pj = (await prRes.json()) as {
+          scoring_markdown?: string | null
+          questionnaire_answers?: unknown
+        }
         setScoringMd(typeof pj.scoring_markdown === 'string' ? pj.scoring_markdown : '')
+        setQuestionnaireAnswers(
+          pj.questionnaire_answers !== undefined && pj.questionnaire_answers !== null
+            ? pj.questionnaire_answers
+            : null
+        )
       }
       setProfileLoading(false)
+
+      if (lrRes.ok) {
+        const lj = (await lrRes.json()) as { lastRun?: LastRunPayload }
+        setLastRun(lj.lastRun ?? null)
+      } else {
+        setLastRun(null)
+      }
+      setLastRunLoading(false)
+      setLoading(false)
     })()
   }, [router])
 
@@ -93,12 +169,95 @@ export default function SettingsPage() {
 
   async function removeKey() {
     setMessage('')
+    setTestMessage('')
     const res = await fetch('/api/settings/anthropic', { method: 'DELETE', credentials: 'include' })
     if (res.ok) {
       setHasKey(false)
       setMessage('Key removed.')
     }
   }
+
+  async function testAnthropicKey() {
+    setTestMessage('')
+    setTestingKey(true)
+    try {
+      const res = await fetch('/api/settings/anthropic/test', { credentials: 'include' })
+      const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+      if (res.ok && j.ok === true) {
+        setTestMessage('Key valid')
+        return
+      }
+      setTestMessage(
+        typeof j.error === 'string' ? mapTestKeyError(j.error) : 'Key test failed'
+      )
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
+  async function redoQuestionnaireSynthesis() {
+    setSynthMessage('')
+    if (questionnaireAnswers === null || typeof questionnaireAnswers !== 'object') {
+      setSynthMessage('No saved questionnaire answers. Complete onboarding first.')
+      return
+    }
+    setSynthesizing(true)
+    try {
+      const res = await fetch('/api/onboarding/synthesize-profile', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(questionnaireAnswers),
+      })
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string
+        detail?: string
+        scoring_markdown?: string
+      }
+      if (!res.ok) {
+        const key = typeof j.error === 'string' ? j.error : 'Request failed'
+        setSynthMessage(mapSynthErrorKey(key, typeof j.detail === 'string' ? j.detail : undefined))
+        return
+      }
+      const pr = await fetch('/api/settings/profile', { credentials: 'include' })
+      if (pr.ok) {
+        const pj = (await pr.json()) as { scoring_markdown?: string | null }
+        setScoringMd(typeof pj.scoring_markdown === 'string' ? pj.scoring_markdown : '')
+      } else if (typeof j.scoring_markdown === 'string') {
+        setScoringMd(j.scoring_markdown)
+      }
+      setSynthMessage('Profile re-synthesized. Review the scoring profile above and save if you edit it.')
+    } finally {
+      setSynthesizing(false)
+    }
+  }
+
+  async function resetScoringProgress() {
+    setResetMessage('')
+    if (!hasKey) return
+    if (
+      !window.confirm(
+        'Clear your scoring progress? Your feed will empty until you run the pipeline again; the next run will re-score shared stories with your current topic and scope settings.'
+      )
+    ) {
+      return
+    }
+    setResettingProgress(true)
+    try {
+      const res = await fetch('/api/filter/reset-progress', { method: 'POST', credentials: 'include' })
+      const j = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) {
+        setResetMessage(typeof j.error === 'string' ? j.error : 'Could not reset progress')
+        return
+      }
+      setResetMessage('Scoring progress cleared. Run the pipeline from the feed when you are ready.')
+    } finally {
+      setResettingProgress(false)
+    }
+  }
+
+  const canRedoSynthesis =
+    questionnaireAnswers !== null && questionnaireAnswers !== undefined && typeof questionnaireAnswers === 'object'
 
   if (loading) {
     return (
@@ -166,7 +325,70 @@ export default function SettingsPage() {
           </button>
         ) : null}
 
+        {hasKey ? (
+          <div className="mt-4">
+            <button
+              type="button"
+              disabled={testingKey}
+              onClick={() => void testAnthropicKey()}
+              className="w-full rounded-xl border border-white/20 bg-white/10 py-2.5 text-sm font-medium text-zinc-100 transition hover:bg-white/15 disabled:opacity-60"
+            >
+              {testingKey ? 'Testing…' : 'Test key'}
+            </button>
+            {testMessage ? (
+              <p
+                className={`mt-2 text-sm ${testMessage === 'Key valid' ? 'text-emerald-300' : 'text-red-400'}`}
+              >
+                {testMessage}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {message ? <p className="mt-4 text-sm text-zinc-400">{message}</p> : null}
+
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <h2 className="font-serif text-xl text-zinc-50">Sources</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Default scrape pool: {RSS_FEEDS_BASE.length} RSS feeds · {REDDIT_BASE.length} subreddits · 1 HN query
+            (Algolia search).
+          </p>
+        </div>
+
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <h2 className="font-serif text-xl text-zinc-50">Last run summary</h2>
+          <p className="mt-1 text-sm text-zinc-400">Most recent logged Claude usage (filter or profile synthesis).</p>
+          {lastRunLoading ? (
+            <p className="mt-4 text-sm text-zinc-500">Loading…</p>
+          ) : lastRun ? (
+            <dl className="mt-4 space-y-2 font-mono text-xs text-zinc-300">
+              <div className="flex justify-between gap-4">
+                <dt className="text-zinc-500">When</dt>
+                <dd>{new Date(lastRun.run_at).toLocaleString()}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-zinc-500">Input tokens</dt>
+                <dd>{(lastRun.input_tokens ?? 0).toLocaleString()}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-zinc-500">Output tokens</dt>
+                <dd>{(lastRun.output_tokens ?? 0).toLocaleString()}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-zinc-500">Est. cost</dt>
+                <dd>{formatUsd4(lastRun.estimated_cost)}</dd>
+              </div>
+              {typeof lastRun.stories_scored === 'number' ? (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-zinc-500">Stories scored</dt>
+                  <dd>{lastRun.stories_scored.toLocaleString()}</dd>
+                </div>
+              ) : null}
+            </dl>
+          ) : (
+            <p className="mt-4 text-sm text-zinc-500">No pipeline runs yet</p>
+          )}
+        </div>
 
         <div className="mt-10 border-t border-white/10 pt-8">
           <h2 className="font-serif text-xl text-zinc-50">Scoring profile (markdown)</h2>
@@ -203,6 +425,51 @@ export default function SettingsPage() {
               {profileMessage ? <p className="text-sm text-zinc-400">{profileMessage}</p> : null}
             </form>
           )}
+        </div>
+
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <h2 className="font-serif text-xl text-zinc-50">Redo questionnaire</h2>
+          <p className="mt-1 text-sm text-zinc-400">
+            Re-run Sonnet synthesis using your saved onboarding answers. Updates the scoring profile text above.
+          </p>
+          {!canRedoSynthesis ? (
+            <p className="mt-4 text-sm text-zinc-500">
+              No saved questionnaire on file.{' '}
+              <Link href="/onboarding" className="text-white underline hover:text-zinc-200">
+                Complete onboarding
+              </Link>{' '}
+              to enable this.
+            </p>
+          ) : (
+            <button
+              type="button"
+              disabled={synthesizing}
+              onClick={() => void redoQuestionnaireSynthesis()}
+              className="mt-4 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-zinc-100 hover:bg-white/15 disabled:opacity-50"
+            >
+              {synthesizing ? 'Synthesizing…' : 'Re-run profile synthesis'}
+            </button>
+          )}
+          {synthMessage ? <p className="mt-3 text-sm text-zinc-400">{synthMessage}</p> : null}
+        </div>
+
+        <div className="mt-10 border-t border-white/10 pt-8">
+          <div className="rounded-2xl border-2 border-red-500/50 bg-red-950/20 p-6">
+            <h2 className="font-serif text-xl text-red-300">Danger zone</h2>
+            <p className="mt-2 text-sm text-zinc-400">
+              Resetting clears your scored stories and scoring marks. Your feed stays empty until you run the pipeline
+              again from the live feed.
+            </p>
+            <button
+              type="button"
+              disabled={resettingProgress || !hasKey}
+              onClick={() => void resetScoringProgress()}
+              className="mt-4 rounded-lg border border-red-500/60 bg-red-950/40 px-4 py-2 text-sm font-medium text-red-100 transition hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {resettingProgress ? 'Resetting…' : 'Reset scoring progress'}
+            </button>
+            {resetMessage ? <p className="mt-3 text-sm text-zinc-400">{resetMessage}</p> : null}
+          </div>
         </div>
 
         <div className="mt-8 flex flex-wrap items-center gap-3 text-sm">

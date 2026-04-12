@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
 import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
+import { validateCsrfOrigin } from '@/lib/csrf'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
@@ -9,7 +10,11 @@ export const dynamic = 'force-dynamic'
  * Clears this user's scoring progress so the next filter run re-scores from the shared raw pool
  * with current pipeline preferences. Deletes `scored_stories` and `user_raw_scored` for the user only.
  */
-export async function POST() {
+export async function POST(req: Request) {
+  if (!validateCsrfOrigin(req)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const user = await getSessionUser()
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

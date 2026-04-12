@@ -21,6 +21,8 @@ export async function GET() {
   const row = await loadUserProfileRow(user.id)
   return NextResponse.json({
     scoring_markdown: row?.scoring_markdown ?? null,
+    questionnaire_answers: row?.questionnaire_answers ?? null,
+    synthesized_at: row?.synthesized_at ?? null,
   })
 }
 

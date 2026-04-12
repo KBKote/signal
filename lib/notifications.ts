@@ -60,6 +60,8 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
   if (subsError || !subs || subs.length === 0) return 0
 
   let sent = 0
+  const sentIds: string[] = []
+  const allFailedEndpoints: string[] = []
 
   for (const story of stories as ScoredStory[]) {
     const payload = JSON.stringify({
@@ -68,7 +70,6 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
       url: story.url,
     })
 
-    const failedEndpoints: string[] = []
     let anyDeliveryOk = false
 
     for (const sub of subs) {
@@ -84,21 +85,32 @@ export async function sendNotificationsForNewStories(userId: string): Promise<nu
       } catch (err: unknown) {
         const statusCode = (err as { statusCode?: number }).statusCode
         if (statusCode === 410 || statusCode === 404) {
-          failedEndpoints.push(sub.endpoint)
+          allFailedEndpoints.push(sub.endpoint)
         }
       }
     }
 
     if (anyDeliveryOk) {
-      await db.from('scored_stories').update({ notified: true }).eq('id', story.id)
+      sentIds.push(story.id)
     }
+  }
 
-    if (failedEndpoints.length > 0) {
-      await db
-        .from('push_subscriptions')
-        .delete()
-        .eq('user_id', userId)
-        .in('endpoint', failedEndpoints)
+  if (sentIds.length > 0) {
+    const { error: upErr } = await db.from('scored_stories').update({ notified: true }).in('id', sentIds)
+    if (upErr) {
+      console.error('[notifications] batch update notified:', upErr.message)
+    }
+  }
+
+  if (allFailedEndpoints.length > 0) {
+    const uniqueEndpoints = [...new Set(allFailedEndpoints)]
+    const { error: delErr } = await db
+      .from('push_subscriptions')
+      .delete()
+      .eq('user_id', userId)
+      .in('endpoint', uniqueEndpoints)
+    if (delErr) {
+      console.error('[notifications] batch delete stale subscriptions:', delErr.message)
     }
   }
 
