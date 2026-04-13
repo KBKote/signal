@@ -11,6 +11,11 @@ function normalizeOrigin(origin: string): string {
   }
 }
 
+/** Canonical origins from `NEXT_PUBLIC_SITE_URL` + comma-separated `TRUSTED_ORIGINS`. */
+export function getTrustedOriginAllowlist(): string[] {
+  return parseTrustedOriginsList()
+}
+
 function parseTrustedOriginsList(): string[] {
   const raw = process.env.TRUSTED_ORIGINS
   const fromList = raw
