@@ -70,6 +70,8 @@ export default function SettingsPage() {
   const [synthMessage, setSynthMessage] = useState('')
   const [resettingProgress, setResettingProgress] = useState(false)
   const [resetMessage, setResetMessage] = useState('')
+  const [deletingAccount, setDeletingAccount] = useState(false)
+  const [deleteMessage, setDeleteMessage] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -253,6 +255,33 @@ export default function SettingsPage() {
       setResetMessage('Scoring progress cleared. Run the pipeline from the feed when you are ready.')
     } finally {
       setResettingProgress(false)
+    }
+  }
+
+  async function deleteAccount() {
+    setDeleteMessage('')
+    if (
+      !window.confirm(
+        'Delete your account permanently? This cannot be undone. All your data — API key, scoring profile, feed history — will be erased.'
+      )
+    ) {
+      return
+    }
+    setDeletingAccount(true)
+    try {
+      const res = await fetch('/api/settings/delete-account', {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const j = (await res.json().catch(() => ({}))) as { error?: string; ok?: boolean }
+      if (!res.ok) {
+        setDeleteMessage(typeof j.error === 'string' ? j.error : 'Could not delete account')
+        return
+      }
+      await createSupabaseBrowserClient().auth.signOut()
+      router.replace('/')
+    } finally {
+      setDeletingAccount(false)
     }
   }
 
@@ -478,6 +507,14 @@ export default function SettingsPage() {
           </Link>
           <button
             type="button"
+            disabled={deletingAccount}
+            onClick={() => void deleteAccount()}
+            className="text-red-500 hover:text-red-300 disabled:opacity-50"
+          >
+            {deletingAccount ? 'Deleting…' : 'Delete account'}
+          </button>
+          <button
+            type="button"
             className="ml-auto text-zinc-500 hover:text-zinc-200"
             onClick={() => {
               void createSupabaseBrowserClient().auth.signOut().then(() => router.replace('/'))
@@ -486,6 +523,7 @@ export default function SettingsPage() {
             Sign out
           </button>
         </div>
+        {deleteMessage ? <p className="mt-2 text-sm text-red-400">{deleteMessage}</p> : null}
       </div>
     </main>
   )
