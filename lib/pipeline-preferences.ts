@@ -76,6 +76,9 @@ export const FILTER_RUN_MAX_CANDIDATES_ABS_MAX = 200
 export const FILTER_RUN_BATCH_MIN = 10
 export const FILTER_RUN_BATCH_ABS_MAX = 40
 
+/** If unscored pool is below this, scrape before scoring. */
+export const AUTO_SCRAPE_POOL_FLOOR = 40
+
 /** Canonical JSON key for comparing prefs across runs (saved in `user_profiles.profile.last_pipeline_prefs`). */
 export function stablePipelinePrefsKey(p: PipelinePreferences): string {
   return JSON.stringify({
@@ -170,7 +173,7 @@ export function hardenCustomTopicForPrompt(raw: string): string {
 export function minScoreToStoreForScope(scope: ScopeLevel): number {
   switch (scope) {
     case 'precise':
-      return 6
+      return 5
     case 'balanced':
       return 5
     case 'expansive':

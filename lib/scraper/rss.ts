@@ -1,7 +1,6 @@
 import Parser from 'rss-parser'
 import sanitizeHtml from 'sanitize-html'
 import he from 'he'
-import { matchesSignalKeywords } from '../user-profile'
 import { RSS_FEEDS_BASE, type RssFeedDef } from '../scrape-sources'
 
 const parser = new Parser({
@@ -28,8 +27,7 @@ function stripHtml(html: string): string {
 }
 
 export async function scrapeRssFeeds(
-  feeds: RssFeedDef[] = RSS_FEEDS_BASE,
-  matchesText: (text: string) => boolean = matchesSignalKeywords
+  feeds: RssFeedDef[] = RSS_FEEDS_BASE
 ): Promise<RawStory[]> {
   const settled = await Promise.allSettled(
     feeds.map(async (feed): Promise<RawStory[]> => {
@@ -43,8 +41,6 @@ export async function scrapeRssFeeds(
 
         const bodyRaw = item.contentSnippet ?? item.content ?? item.summary ?? ''
         const raw_text = stripHtml(bodyRaw).slice(0, 2000)
-
-        if (!matchesText(title + ' ' + raw_text)) continue
 
         stories.push({
           title,

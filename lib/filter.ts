@@ -28,6 +28,54 @@ const MAX_STORY_AGE_DAYS = intEnv('FEED_MAX_AGE_DAYS', 7, 30)
 const BATCH_TIMEOUT_MS = 120_000
 const BATCH_CONCURRENCY = 2
 
+export type PoolStateCounts = {
+  rawWindow: number
+  scoredInWindow: number
+  unscoredEligible: number
+}
+
+/**
+ * Compute unscored eligible pool size for a user using the same eligibility rules
+ * as `runFilterPipeline` (RAW_FETCH_LIMIT window, `user_raw_scored` exclusion, and
+ * `FEED_MAX_AGE_DAYS` freshness on `published_at` when present).
+ */
+export async function computePoolStateCounts(userId: string): Promise<PoolStateCounts> {
+  const db = getSupabaseAdmin()
+
+  const { data: raws, error: fetchError } = await db
+    .from('raw_stories')
+    .select('id, published_at')
+    .order('scraped_at', { ascending: false })
+    .limit(RAW_FETCH_LIMIT)
+
+  if (fetchError) throw new Error(`Failed to fetch raw stories: ${fetchError.message}`)
+
+  const rawWindow = raws?.length ?? 0
+  if (!raws?.length) return { rawWindow: 0, scoredInWindow: 0, unscoredEligible: 0 }
+
+  const ids = raws.map((r) => r.id)
+  const { data: doneRows, error: doneError } = await db
+    .from('user_raw_scored')
+    .select('raw_story_id')
+    .eq('user_id', userId)
+    .in('raw_story_id', ids)
+
+  if (doneError) throw new Error(`Failed to fetch user_raw_scored: ${doneError.message}`)
+
+  const done = new Set((doneRows ?? []).map((d) => d.raw_story_id as string))
+  const scoredInWindow = done.size
+
+  const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
+  const unscoredEligible = raws
+    .filter((r) => !done.has(r.id))
+    .filter((r) => {
+      if (!r.published_at) return true
+      return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
+    }).length
+
+  return { rawWindow, scoredInWindow, unscoredEligible }
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)

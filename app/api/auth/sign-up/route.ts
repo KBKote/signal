@@ -64,7 +64,13 @@ export async function POST(req: Request) {
     }
   )
 
-  const { data, error } = await supabase.auth.signUp({ email, password })
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: 'https://devsignal.space/auth/callback',
+    },
+  })
   if (error) {
     const msg = error.message ?? ''
     const looksLikeUpstreamNetwork =

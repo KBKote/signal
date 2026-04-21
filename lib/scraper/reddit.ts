@@ -1,4 +1,3 @@
-import { matchesSignalKeywords } from '../user-profile'
 import { REDDIT_BASE, type RedditSubDef } from '../scrape-sources'
 import type { RawStory } from './rss'
 
@@ -14,8 +13,7 @@ interface RedditPost {
 }
 
 export async function scrapeReddit(
-  subreddits: RedditSubDef[] = REDDIT_BASE,
-  matchesText: (text: string) => boolean = matchesSignalKeywords
+  subreddits: RedditSubDef[] = REDDIT_BASE
 ): Promise<RawStory[]> {
   const settled = await Promise.allSettled(
     subreddits.map(async (sub): Promise<RawStory[]> => {
@@ -48,8 +46,6 @@ export async function scrapeReddit(
         const raw_text = selftext
           ? selftext.slice(0, 2000)
           : `Reddit post from r/${sub.name} with ${score} upvotes.`
-
-        if (!matchesText(title + ' ' + raw_text)) continue
 
         stories.push({
           title: title.trim(),

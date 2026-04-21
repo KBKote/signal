@@ -68,7 +68,7 @@ function mapApiError(data: { error?: string; detail?: string }): string {
     case 'synthesis_failed':
       return 'Profile generation failed — please try again'
     case 'synthesis_request_failed':
-      return 'Could not reach Claude. Please try again in a moment.'
+      return 'Could not reach Claude. Please check your credit balance at console.anthropic.com '
     case 'missing_profile_model':
       return 'Profile synthesis is temporarily unavailable.'
     case 'invalid_answers':

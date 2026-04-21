@@ -38,10 +38,10 @@ export async function POST(request: Request) {
     // 1. Collect from all sources in parallel (reach widens by topic)
     console.log('[Scrape] Starting data collection...')
     const [rssStories, redditStories, hnStories, nitterStories] = await Promise.all([
-      scrapeRssFeeds(pack.rssFeeds, pack.matchesText),
-      scrapeReddit(pack.subreddits, pack.matchesText),
-      scrapeHackerNews(pack.hnQuery, pack.matchesText),
-      scrapeNitterAccounts(NITTER_USERNAMES, pack.matchesText),
+      scrapeRssFeeds(pack.rssFeeds),
+      scrapeReddit(pack.subreddits),
+      scrapeHackerNews(pack.hnQuery),
+      scrapeNitterAccounts(NITTER_USERNAMES),
     ])
 
     const allStories = [...rssStories, ...redditStories, ...hnStories, ...nitterStories]
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         inserted: 0,
-        message: 'No stories matched keyword filter',
+        message: 'No stories collected',
         cleanup: cleanup ?? undefined,
       })
     }

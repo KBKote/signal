@@ -26,7 +26,6 @@ function stripHtml(html: string): string {
 
 async function scrapeOneNitterUser(
   username: string,
-  matchesText: (text: string) => boolean,
   origins: readonly string[],
   itemsPerAccount: number
 ): Promise<RawStory[]> {
@@ -57,8 +56,6 @@ async function scrapeOneNitterUser(
         const bodyRaw = item.contentSnippet ?? item.content ?? item.summary ?? ''
         const raw_text = stripHtml(bodyRaw).slice(0, 2000)
 
-        if (!matchesText(title + ' ' + raw_text)) continue
-
         stories.push({
           title,
           url,
@@ -80,14 +77,13 @@ async function scrapeOneNitterUser(
 
 export async function scrapeNitterAccounts(
   usernames: readonly string[],
-  matchesText: (text: string) => boolean,
   options?: { instanceOrigins?: readonly string[]; itemsPerAccount?: number }
 ): Promise<RawStory[]> {
   const origins = options?.instanceOrigins ?? NITTER_INSTANCE_ORIGINS
   const itemsPerAccount = options?.itemsPerAccount ?? 20
 
   const settled = await Promise.allSettled(
-    usernames.map((u) => scrapeOneNitterUser(u, matchesText, origins, itemsPerAccount))
+    usernames.map((u) => scrapeOneNitterUser(u, origins, itemsPerAccount))
   )
 
   const results: RawStory[] = []

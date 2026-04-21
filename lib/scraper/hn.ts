@@ -1,8 +1,7 @@
 import { HN_QUERY_DEFAULT } from '../scrape-sources'
-import { matchesSignalKeywords } from '../user-profile'
 import type { RawStory } from './rss'
 
-const MIN_POINTS = 50
+const MIN_POINTS = 15
 
 interface HNHit {
   objectID: string
@@ -14,8 +13,7 @@ interface HNHit {
 }
 
 export async function scrapeHackerNews(
-  query: string = HN_QUERY_DEFAULT,
-  matchesText: (text: string) => boolean = matchesSignalKeywords
+  query: string = HN_QUERY_DEFAULT
 ): Promise<RawStory[]> {
   const results: RawStory[] = []
 
@@ -24,7 +22,7 @@ export async function scrapeHackerNews(
       query,
       tags: 'story',
       numericFilters: `points>=${MIN_POINTS}`,
-      hitsPerPage: '30',
+      hitsPerPage: '100',
     })
 
     const controller = new AbortController()
@@ -53,8 +51,6 @@ export async function scrapeHackerNews(
           ? hit.story_text.replace(/<[^>]*>/g, ' ').slice(0, 2000)
           : `Hacker News story with ${hit.points} points.`
 
-        if (!matchesText(title + ' ' + raw_text)) continue
-
         results.push({
           title,
           url,
@@ -64,7 +60,7 @@ export async function scrapeHackerNews(
         })
       }
 
-      console.log(`[HN] Fetched ${hits.length} stories, kept ${results.length} after keyword filter`)
+      console.log(`[HN] Fetched ${hits.length} stories, kept ${results.length}`)
     } finally {
       clearTimeout(timeoutId)
     }

@@ -15,6 +15,7 @@ import {
   DEFAULT_PIPELINE_RUN_TUNING,
   parseStoredLastPipelinePrefs,
   stablePipelinePrefsKey,
+  AUTO_SCRAPE_POOL_FLOOR,
   type PipelineRunTuning,
 } from '@/lib/pipeline-preferences'
 
@@ -31,7 +32,7 @@ const TERMINAL_LINES = [
 ]
 
 const INITIAL_PIPE_STEPS = [
-  { label: 'Collect RSS, Reddit & Hacker News', state: 'pending' as StepState },
+  { label: 'Collect new stories (scrape if needed)', state: 'pending' as StepState },
   { label: 'Score new stories (Claude Haiku)', state: 'pending' as StepState },
   { label: 'Reload feed from database', state: 'pending' as StepState },
 ]
@@ -72,6 +73,11 @@ export default function LiveFeedPage() {
   const [hasMoreStories, setHasMoreStories] = useState(false)
   const [storiesNextCursor, setStoriesNextCursor] = useState<string | null>(null)
   const [loadingMoreStories, setLoadingMoreStories] = useState(false)
+  const [poolState, setPoolState] = useState<{
+    unscoredEligible: number
+    rawWindow: number
+    scoredInWindow: number
+  } | null>(null)
   const pipelineRunningRef = useRef(false)
   /** Prefs from the last successful `/api/filter` (server also stores under `profile.last_pipeline_prefs`). */
   const lastSuccessfulPipelinePrefsRef = useRef<PipelinePreferences | null>(null)
@@ -94,6 +100,21 @@ export default function LiveFeedPage() {
         setHasAnthropicKey(Boolean(j.hasAnthropicKey))
       }
     })
+  }, [])
+
+  const fetchPoolState = useCallback(async () => {
+    const res = await fetch('/api/pool-state', { cache: 'no-store', credentials: 'include' })
+    const j = (await res.json().catch(() => ({}))) as {
+      success?: boolean
+      unscoredEligible?: unknown
+      rawWindow?: unknown
+      scoredInWindow?: unknown
+    }
+    if (!res.ok || !j.success) return
+    if (typeof j.unscoredEligible !== 'number' || typeof j.rawWindow !== 'number' || typeof j.scoredInWindow !== 'number') {
+      return
+    }
+    setPoolState({ unscoredEligible: j.unscoredEligible, rawWindow: j.rawWindow, scoredInWindow: j.scoredInWindow })
   }, [])
 
   const fetchStories = useCallback(async (): Promise<boolean> => {
@@ -196,15 +217,42 @@ export default function LiveFeedPage() {
 
     try {
       mark(0, 'running')
-      setPipelineMessage('Step 1 of 3 — collecting from RSS, Reddit, and HN (sources widen by topic)…')
-      const scrape = await fetch('/api/scrape', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
-      })
-      if (!scrape.ok) {
-        throw new Error(await readJsonError(scrape, 'Scrape failed'))
+      setPipelineMessage('Checking pool…')
+      const before = await fetch('/api/pool-state', { cache: 'no-store', credentials: 'include' })
+      const beforePayload = (await before.json().catch(() => ({}))) as {
+        success?: boolean
+        unscoredEligible?: unknown
+      }
+      const unscoredEligible =
+        before.ok && beforePayload.success && typeof beforePayload.unscoredEligible === 'number'
+          ? beforePayload.unscoredEligible
+          : null
+
+      if (unscoredEligible === null || unscoredEligible < AUTO_SCRAPE_POOL_FLOOR) {
+        setPipelineMessage(
+          unscoredEligible === null
+            ? 'Pool state unknown — scraping to be safe…'
+            : `Pool low (${unscoredEligible} ready) — scraping fresh stories first…`
+        )
+        const scrape = await fetch('/api/scrape', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
+        })
+
+        if (!scrape.ok) {
+          if (scrape.status === 429) {
+            setPipelineMessage('Scrape rate-limited — scoring what’s available…')
+          } else {
+            throw new Error(await readJsonError(scrape, 'Scrape failed'))
+          }
+        } else {
+          setPipelineMessage('Scrape complete — refreshing pool…')
+        }
+        await fetchPoolState()
+      } else {
+        setPipelineMessage(`${unscoredEligible} stories ready — skipping scrape.`)
       }
       mark(0, 'done')
 
@@ -227,9 +275,17 @@ export default function LiveFeedPage() {
         totalBatches?: number
       }
       if (!filter.ok) {
+        if (filter.status === 429) {
+          throw new Error(
+            typeof filterPayload.error === 'string'
+              ? filterPayload.error
+              : 'Filter rate-limited. Please wait before running again.'
+          )
+        }
         throw new Error(typeof filterPayload.error === 'string' ? filterPayload.error : 'Filter failed')
       }
       mark(1, 'done')
+      await fetchPoolState()
 
       if (
         typeof filterPayload.totalInputTokens === 'number' &&
@@ -282,7 +338,7 @@ export default function LiveFeedPage() {
       pipelineRunningRef.current = false
       setRunningPipeline(false)
     }
-  }, [fetchStories, pipelinePrefs, pipelineRunTuning, hasAnthropicKey])
+  }, [fetchStories, fetchPoolState, pipelinePrefs, pipelineRunTuning, hasAnthropicKey])
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -292,11 +348,25 @@ export default function LiveFeedPage() {
   }, [fetchStories])
 
   useEffect(() => {
+    const id = window.setTimeout(() => {
+      void fetchPoolState()
+    }, 0)
+    return () => clearTimeout(id)
+  }, [fetchPoolState])
+
+  useEffect(() => {
     const timer = setInterval(() => {
       void fetchStories()
     }, REFRESH_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [fetchStories])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void fetchPoolState()
+    }, REFRESH_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [fetchPoolState])
 
   const counts: Record<Category, number> = {
     all: stories.length,
@@ -410,6 +480,21 @@ export default function LiveFeedPage() {
 
           <div className="signal-section rounded-3xl border border-white/10 bg-black/50 p-7 text-zinc-100 backdrop-blur-md">
             <div className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-black/40 p-4">
+                <p className="text-sm text-zinc-500">Pool ready to score</p>
+                <p className="mt-1 text-2xl font-semibold text-zinc-50">
+                  {poolState ? poolState.unscoredEligible.toLocaleString() : '—'}
+                </p>
+                {poolState ? (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    {poolState.unscoredEligible < 40
+                      ? `${poolState.unscoredEligible} left — pipeline will scrape first.`
+                      : `${poolState.unscoredEligible} ready — run pipeline to score up to your budget.`}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-xs text-zinc-500">Loading pool state…</p>
+                )}
+              </div>
               <div className="rounded-xl border border-white/10 bg-black/40 p-4">
                 <p className="text-sm text-zinc-500">Stories loaded</p>
                 <p className="mt-1 text-2xl font-semibold text-zinc-50">{stories.length}</p>

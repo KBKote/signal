@@ -1,9 +1,8 @@
 /**
- * Topic-aware scrape configuration: extra feeds, subreddits, HN search, and keyword prefilter
+ * Topic-aware scrape configuration: extra feeds, subreddits, and HN search
  * so a macro/stock emphasis does not rely only on CoinDesk-style crypto/AI URLs.
  */
 import { sanitizeTopicCustom, type PipelinePreferences } from '@/lib/pipeline-preferences'
-import { matchesSignalKeywords } from '@/lib/user-profile'
 
 export type RssFeedDef = { url: string; source: string }
 export type RedditSubDef = { name: string; sort: string }
@@ -93,6 +92,24 @@ const REDDIT_DEV: RedditSubDef[] = [
   { name: 'golang', sort: 'top.json?t=day' },
 ]
 
+/** Fixed discovery subs for `topicMode: other` (no dynamic token → subreddit mapping). */
+const REDDIT_OTHER_DISCOVERY: RedditSubDef[] = [
+  { name: 'news', sort: 'hot.json' },
+  { name: 'worldnews', sort: 'hot.json' },
+  { name: 'technology', sort: 'hot.json' },
+  { name: 'investing', sort: 'hot.json' },
+  { name: 'startups', sort: 'hot.json' },
+]
+
+/** General-purpose RSS sources to support arbitrary `topicMode: other`. */
+const RSS_OTHER_DISCOVERY: RssFeedDef[] = [
+  { url: 'https://feeds.arstechnica.com/arstechnica/index', source: 'ars-technica' },
+  { url: 'https://www.theverge.com/rss/index.xml', source: 'the-verge' },
+  { url: 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml', source: 'nytimes-technology' },
+  { url: 'http://feeds.bbci.co.uk/news/world/rss.xml', source: 'bbc-world' },
+  { url: 'http://feeds.bbci.co.uk/news/business/rss.xml', source: 'bbc-business' },
+]
+
 /** Default HN Algolia `query` — also used when topic is intersection-only. */
 export const HN_QUERY_DEFAULT =
   'AI OR "machine learning" OR ethereum OR crypto OR DeFi OR LLM OR "language model" OR anthropic OR openai OR "zero knowledge" OR zkEVM OR "smart contract" OR solidity OR "AI agent" OR inference'
@@ -105,78 +122,6 @@ const HN_QUERY_AI =
 
 const HN_QUERY_DEV =
   '(kubernetes OR rust OR golang OR typescript OR API OR SDK OR postgres OR linux OR security OR "open source")'
-
-/** Macro / equities / policy — widens beyond pure on-chain keywords. */
-const KEYWORDS_MACRO: string[] = [
-  'fed ',
-  ' fomc',
-  'treasury',
-  'yield',
-  'bond',
-  'equity',
-  'equities',
-  's&p',
-  'sp500',
-  'nasdaq',
-  'dow jones',
-  'gdp',
-  'inflation',
-  'cpi',
-  'pce',
-  'recession',
-  'earnings',
-  ' ipo',
-  'macro',
-  'liquidity',
-  'rate hike',
-  'rate cut',
-  'forex',
-  'fx ',
-  'commodit',
-  'sovereign',
-  'credit ',
-  'bank of',
-  'central bank',
-  'sec ',
-  'etf',
-  'dividend',
-  'shareholder',
-  'stock ',
-  'stocks',
-  'trader',
-  'portfolio',
-  'valuation',
-  'merger',
-  'acquisition',
-]
-
-const KEYWORDS_AI_EXTRA: string[] = [
-  'pytorch',
-  'tensorflow',
-  'jax ',
-  'cuda',
-  'eval',
-  'benchmark',
-  'multimodal',
-  'fine-tun',
-  'weights',
-  'gpu',
-  'inference',
-]
-
-const KEYWORDS_DEV_EXTRA: string[] = [
-  'kubernetes',
-  'docker',
-  'postgres',
-  'typescript',
-  'react ',
-  'next.js',
-  'api ',
-  'sdk',
-  'observability',
-  'ci/cd',
-  'linux',
-]
 
 function uniqByUrl(feeds: RssFeedDef[]): RssFeedDef[] {
   const seen = new Set<string>()
@@ -206,27 +151,16 @@ function tokensFromCustom(custom: string): string[] {
   return [...new Set(parts)].slice(0, 28)
 }
 
-function buildKeywordMatcher(supplemental: string[]): (text: string) => boolean {
-  const extra = supplemental.map((k) => k.toLowerCase())
-  return (text: string) => {
-    if (matchesSignalKeywords(text)) return true
-    const lower = text.toLowerCase()
-    return extra.some((k) => lower.includes(k))
-  }
-}
-
 export type ScrapePack = {
   rssFeeds: RssFeedDef[]
   subreddits: RedditSubDef[]
   hnQuery: string
-  matchesText: (text: string) => boolean
 }
 
 export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
   let rss = [...RSS_FEEDS_BASE]
   let subs = [...REDDIT_BASE]
   let hnQuery = HN_QUERY_DEFAULT
-  let supplemental: string[] = []
 
   switch (prefs.topicMode) {
     case 'intersection':
@@ -235,7 +169,6 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
       rss = uniqByUrl([...rss, ...RSS_MACRO])
       subs = uniqSubs([...subs, ...REDDIT_MACRO])
       hnQuery = `${HN_QUERY_DEFAULT} OR ${HN_QUERY_MACRO}`
-      supplemental = KEYWORDS_MACRO
       break
     case 'ethereum_defi':
       rss = uniqByUrl([...rss, ...RSS_ETHEREUM])
@@ -245,26 +178,39 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
       rss = uniqByUrl([...rss, ...RSS_AI])
       subs = uniqSubs([...subs, ...REDDIT_AI])
       hnQuery = `${HN_QUERY_DEFAULT} OR ${HN_QUERY_AI}`
-      supplemental = KEYWORDS_AI_EXTRA
       break
     case 'developer':
       rss = uniqByUrl([...rss, ...RSS_DEV])
       subs = uniqSubs([...subs, ...REDDIT_DEV])
       hnQuery = `${HN_QUERY_DEFAULT} OR ${HN_QUERY_DEV}`
-      supplemental = KEYWORDS_DEV_EXTRA
       break
     case 'other': {
       const tokens = tokensFromCustom(prefs.topicCustom).map((w) => w.replace(/[^a-z0-9]/gi, '')).filter(Boolean)
-      supplemental = tokens
       if (tokens.length > 0) {
         const q = tokens.slice(0, 6).join(' ')
+        const qOr = tokens.slice(0, 8).join(' OR ')
+        const qQuoted = tokens.length >= 2 ? `"${tokens.slice(0, 2).join(' ')}"` : q
+
         rss = uniqByUrl([
           ...rss,
+          ...RSS_OTHER_DISCOVERY,
+          // Multiple Google News queries to increase recall for arbitrary topics
           {
             url: `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`,
-            source: 'google-news-custom',
+            source: 'google-news-custom-and',
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(qOr)}&hl=en-US&gl=US&ceid=US:en`,
+            source: 'google-news-custom-or',
+          },
+          {
+            url: `https://news.google.com/rss/search?q=${encodeURIComponent(qQuoted)}&hl=en-US&gl=US&ceid=US:en`,
+            source: 'google-news-custom-phrase',
           },
         ])
+
+        subs = uniqSubs([...subs, ...REDDIT_OTHER_DISCOVERY])
+
         const hnTokens = tokens.slice(0, 8).filter((t) => t.length >= 3)
         hnQuery =
           hnTokens.length > 0 ? `${HN_QUERY_DEFAULT} OR (${hnTokens.join(' OR ')})` : HN_QUERY_DEFAULT
@@ -279,7 +225,6 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
     rssFeeds: rss,
     subreddits: subs,
     hnQuery,
-    matchesText: buildKeywordMatcher(supplemental),
   }
 }
 
