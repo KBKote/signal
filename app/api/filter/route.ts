@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionUser } from '@/lib/auth/session'
 import { assertUserReadyForPipeline } from '@/lib/auth/user-setup-gates'
 import { takeFilterRateSlotDb } from '@/lib/filter-rate-limit'
+import { takeScrapeRateSlotDb } from '@/lib/scrape-rate-limit'
 import { runFilterPipeline } from '@/lib/filter'
 import { parseFilterRequestPayload, DEFAULT_PIPELINE_PREFS } from '@/lib/pipeline-preferences'
 import { getSupabaseAdmin } from '@/lib/supabase-server'
@@ -26,6 +27,32 @@ export async function POST(request: Request) {
   const rateMsg = await takeFilterRateSlotDb(user.id)
   if (rateMsg) {
     return NextResponse.json({ error: rateMsg }, { status: 429 })
+  }
+
+  // Auto-trigger scrape if user hasn't scraped in 24h — ensures fresh pool before scoring
+  // Awaited with a 4s timeout so the scrape endpoint starts its own Vercel invocation.
+  // Filter proceeds regardless of whether the scrape fires or completes.
+  const scrapeRateMsg = await takeScrapeRateSlotDb(user.id)
+  if (!scrapeRateMsg) {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+    const cronSecret = process.env.CRON_SECRET
+    if (cronSecret) {
+      try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 4_000)
+        await fetch(`${siteUrl}/api/scrape`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${cronSecret}`,
+          },
+          body: JSON.stringify({ topicMode: 'intersection' }),
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeoutId))
+      } catch {
+        // AbortError (timeout) or network error — expected; scrape may still be running
+      }
+    }
   }
 
   let prefs = DEFAULT_PIPELINE_PREFS

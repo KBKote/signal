@@ -16,7 +16,7 @@ function isoDaysAgo(days: number): string {
  * Order: scored_stories, user_raw_scored, then raw_stories (FK-safe).
  */
 export async function runRetentionCleanup(admin: SupabaseClient): Promise<{ ok: boolean }> {
-  const rawDays = daysEnv('RAW_STORIES_RETENTION_DAYS', 14)
+  const rawDays = daysEnv('RAW_STORIES_RETENTION_DAYS', 8)
   const userRawDays = daysEnv('USER_RAW_SCORED_RETENTION_DAYS', 90)
   const scoredDays = daysEnv('SCORED_STORIES_RETENTION_DAYS', 14)
 

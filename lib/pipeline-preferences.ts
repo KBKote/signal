@@ -7,6 +7,7 @@ export const TOPIC_MODES = [
   'intersection',
   'ethereum_defi',
   'ai_ml',
+  'ai_dev',
   'macro_markets',
   'developer',
   'other',
@@ -120,6 +121,8 @@ const TOPIC_PRESET_COPY: Record<Exclude<TopicMode, 'other'>, string> = {
     'Prioritize Ethereum, DeFi, rollups, protocol design, on-chain mechanics, MEV, liquidity, and ecosystem infrastructure. Deprioritize generic AI product launches or consumer apps unless they clearly move value or security on-chain.',
   ai_ml:
     'Prioritize machine learning, LLMs, agents, inference, open models, evals, and AI engineering or product news. Deprioritize pure crypto price or macro threads unless they tie to AI adoption or compute markets.',
+  ai_dev:
+    'Prioritize hands-on AI builder content: new agent frameworks, MCP tools, prompt engineering techniques, vibe coding workflows, AI-assisted dev tools (Cursor, Copilot, Aider), RAG patterns, fine-tuning guides, open-source model releases with practical usage, and real practitioner experience reports. Score highly anything teaching a new skill or workflow that makes an AI-assisted developer more effective. Deprioritize pure AI news announcements, funding rounds, or hype without actionable technical content.',
   macro_markets:
     'Prioritize macro (rates, liquidity, FX, credit), sector risk-on/off, flows, major bank or sovereign policy, commodities, and regulation when there is a clear market or portfolio angle. Score as noise or 1–4 unless the story materially supports a macro, rates, liquidity, or cross-asset thesis. Deprioritize generic consumer AI, university lab PR, developer tooling, and "ChatGPT wrapper" startup news unless there is an explicit macro, policy, or market-structure link.',
   developer:
@@ -287,6 +290,7 @@ export const TOPIC_MODE_LABELS: Record<TopicMode, string> = {
   intersection: 'AI × crypto (balanced)',
   ethereum_defi: 'Ethereum & DeFi',
   ai_ml: 'AI & machine learning',
+  ai_dev: 'AI builder & vibe coding',
   macro_markets: 'Macro & markets',
   developer: 'Developer & infra',
   other: 'Other (custom)',

@@ -109,6 +109,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'synthesis_failed' }, { status: 500 })
   }
 
+  // Embed the profile for vector candidate pre-filtering (Step 3C)
+  // Non-fatal: if OpenAI is unavailable, synthesis still succeeds
+  let profileEmbedding: number[] | null = null
+  try {
+    const { embedText } = await import('@/lib/embeddings')
+    profileEmbedding = await embedText(text)
+  } catch (embErr) {
+    console.warn('[synthesize-profile] Failed to generate profile embedding:', embErr)
+  }
+
   const existing = await loadUserProfileRow(user.id)
   const profile =
     existing?.profile && typeof existing.profile === 'object' ? existing.profile : {}
@@ -121,6 +131,7 @@ export async function POST(req: Request) {
       profile,
       onboarding_completed,
       scoring_markdown: text,
+      profile_embedding: profileEmbedding,
       questionnaire_answers: answers as unknown as Record<string, unknown>,
       synthesized_at: now,
       updated_at: now,

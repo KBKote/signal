@@ -8,6 +8,17 @@ export type RssFeedDef = { url: string; source: string }
 export type RedditSubDef = { name: string; sort: string }
 
 /** Default pool (AI × crypto skew) — always included. */
+/* Dead/unreachable feeds (as of 2026-04-21) — omitted or substituted:
+ * - https://blog.ethereum.org/en/rss.xml (404) → https://blog.ethereum.org/feed.xml
+ * - https://research.paradigm.xyz/feed (525) → https://feeds.feedburner.com/paradigm
+ * - https://defillama.com/news/feed (403)
+ * - https://blog.uniswap.org/rss.xml (404) → https://medium.com/feed/uniswap
+ * - https://a16zcrypto.com/feed/ (404) — no working replacement
+ * - https://newsletter.banklesshq.com/feed (TLS cert error) → https://www.bankless.com/rss/feed
+ * - https://www.dlnews.com/feed/ (404) → https://www.dlnews.com/rss/
+ * - https://openai.com/blog/rss/ (403) → https://openai.com/news/rss.xml
+ * - https://www.anthropic.com/news.rss (404) — no public RSS available
+ */
 export const RSS_FEEDS_BASE: RssFeedDef[] = [
   { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'coindesk' },
   { url: 'https://decrypt.co/feed', source: 'decrypt' },
@@ -18,19 +29,23 @@ export const RSS_FEEDS_BASE: RssFeedDef[] = [
   { url: 'https://feeds.arstechnica.com/arstechnica/index', source: 'ars-technica' },
   { url: 'https://huggingface.co/blog/feed.xml', source: 'huggingface' },
   { url: 'https://cointelegraph.com/rss', source: 'cointelegraph' },
-  { url: 'https://a16zcrypto.com/feed/', source: 'a16z-crypto' },
-  { url: 'https://newsletter.banklesshq.com/feed', source: 'bankless' },
-  { url: 'https://www.dlnews.com/feed/', source: 'dl-news' },
+  { url: 'https://www.bankless.com/rss/feed', source: 'bankless' },
+  { url: 'https://www.dlnews.com/rss/', source: 'dl-news' },
   { url: 'https://protos.com/feed/', source: 'protos' },
   { url: 'https://blog.chain.link/feed/', source: 'chainlink-blog' },
   { url: 'https://www.theblock.co/rss.xml', source: 'the-block' },
   { url: 'https://simonwillison.net/atom/everything/', source: 'simon-willison' },
   { url: 'https://www.interconnects.ai/feed', source: 'interconnects' },
   { url: 'https://www.semianalysis.com/feed', source: 'semianalysis' },
-  { url: 'https://openai.com/blog/rss/', source: 'openai-blog' },
-  { url: 'https://www.anthropic.com/news.rss', source: 'anthropic-news' },
+  { url: 'https://openai.com/news/rss.xml', source: 'openai-blog' },
   { url: 'https://bair.berkeley.edu/blog/feed.xml', source: 'bair' },
   { url: 'https://newsletter.pragmaticengineer.com/feed', source: 'pragmatic-engineer' },
+  { url: 'https://blog.ethereum.org/feed.xml', source: 'ethereum-foundation' },
+  { url: 'https://feeds.feedburner.com/paradigm', source: 'paradigm-research' },
+  { url: 'https://techcrunch.com/category/artificial-intelligence/feed/', source: 'techcrunch-ai' },
+  { url: 'https://venturebeat.com/category/ai/feed/', source: 'venturebeat-ai' },
+  { url: 'https://github.blog/feed/', source: 'github-blog' },
+  { url: 'https://medium.com/feed/uniswap', source: 'uniswap-blog' },
 ]
 
 export const REDDIT_BASE: RedditSubDef[] = [
@@ -45,6 +60,15 @@ export const REDDIT_BASE: RedditSubDef[] = [
   { name: 'OpenAI', sort: 'hot.json' },
   { name: 'algotrading', sort: 'top.json?t=day' },
   { name: 'CryptoTechnology', sort: 'top.json?t=day' },
+  { name: 'solidity', sort: 'top.json?t=day' },
+  { name: 'web3', sort: 'hot.json' },
+  { name: 'MEV', sort: 'top.json?t=day' },
+  { name: 'Bitcoin', sort: 'hot.json' },
+  { name: 'CryptoCurrency', sort: 'hot.json' },
+  // AI agents and MCP — always relevant
+  { name: 'AIAgents', sort: 'hot.json' },
+  { name: 'agentdevelopment', sort: 'hot.json' },
+  { name: 'mcp_ai', sort: 'hot.json' },
 ]
 
 const RSS_MACRO: RssFeedDef[] = [
@@ -62,7 +86,7 @@ const REDDIT_MACRO: RedditSubDef[] = [
   { name: 'SecurityAnalysis', sort: 'top.json?t=day' },
 ]
 
-const RSS_ETHEREUM: RssFeedDef[] = [{ url: 'https://blog.ethereum.org/en/rss.xml', source: 'ethereum-blog' }]
+const RSS_ETHEREUM: RssFeedDef[] = [{ url: 'https://blog.ethereum.org/feed.xml', source: 'ethereum-blog' }]
 
 const REDDIT_ETHEREUM: RedditSubDef[] = [
   { name: 'ethfinance', sort: 'hot.json' },
@@ -80,6 +104,56 @@ const REDDIT_AI: RedditSubDef[] = [
   { name: 'singularity', sort: 'top.json?t=day' },
   { name: 'ChatGPT', sort: 'hot.json' },
 ]
+
+// AI builder / vibe coding — practitioner content, tools, and techniques
+const RSS_AI_DEV: RssFeedDef[] = [
+  // Practitioner newsletters & blogs
+  { url: 'https://www.latent.space/feed', source: 'latent-space' },
+  { url: 'https://buttondown.com/ainews/rss', source: 'ai-news-daily' },
+  { url: 'https://lilianweng.github.io/lil-log/feed.xml', source: 'lil-log' },
+  { url: 'https://hamel.dev/index.xml', source: 'hamel-dev' },
+  { url: 'https://every.to/chain-of-thought/feed', source: 'chain-of-thought' },
+  { url: 'https://changelog.com/practicalai/feed', source: 'practical-ai' },
+  // Framework & tool blogs
+  { url: 'https://blog.langchain.dev/rss/', source: 'langchain-blog' },
+  { url: 'https://thenewstack.io/feed/', source: 'the-new-stack' },
+  { url: 'https://about.sourcegraph.com/blog/rss.xml', source: 'sourcegraph-blog' },
+  { url: 'https://research.google/blog/rss/', source: 'google-research' },
+  { url: 'https://martinfowler.com/feed.atom', source: 'martin-fowler' },
+  { url: 'https://www.aisnakeoil.com/feed', source: 'ai-snake-oil' },
+  // Dev.to tags — tutorials and how-tos by practitioners
+  { url: 'https://dev.to/feed/tag/aiagents', source: 'devto-aiagents' },
+  { url: 'https://dev.to/feed/tag/llm', source: 'devto-llm' },
+  { url: 'https://dev.to/feed/tag/machinelearning', source: 'devto-ml' },
+  { url: 'https://dev.to/feed/tag/claudeai', source: 'devto-claude' },
+  // Medium tags — longer-form practitioner write-ups
+  { url: 'https://medium.com/feed/tag/ai-agents', source: 'medium-ai-agents' },
+  { url: 'https://medium.com/feed/tag/llm', source: 'medium-llm' },
+  { url: 'https://medium.com/feed/tag/prompt-engineering', source: 'medium-prompts' },
+  // New tools & launches
+  { url: 'https://www.producthunt.com/feed', source: 'product-hunt' },
+  // Research papers (cs.AI + cs.LG) — latest techniques
+  { url: 'https://export.arxiv.org/rss/cs.AI', source: 'arxiv-ai' },
+  { url: 'https://export.arxiv.org/rss/cs.LG', source: 'arxiv-ml' },
+]
+
+const REDDIT_AI_DEV: RedditSubDef[] = [
+  { name: 'vibecoding', sort: 'hot.json' },
+  { name: 'ChatGPTCoding', sort: 'hot.json' },
+  { name: 'ClaudeAI', sort: 'hot.json' },
+  { name: 'Cursor', sort: 'hot.json' },
+  { name: 'PromptEngineering', sort: 'top.json?t=day' },
+  { name: 'LLMDevs', sort: 'hot.json' },
+  { name: 'n8n', sort: 'hot.json' },
+  { name: 'AutoGPT', sort: 'hot.json' },
+  { name: 'AIToolsTech', sort: 'hot.json' },
+  { name: 'LLMstudio', sort: 'hot.json' },
+  { name: 'openai', sort: 'hot.json' },
+  { name: 'perplexity_ai', sort: 'hot.json' },
+]
+
+const HN_QUERY_AI_DEV =
+  '(MCP OR "model context protocol" OR "vibe coding" OR "AI agent" OR "agent framework" OR cursor OR aider OR "copilot" OR RAG OR "retrieval augmented" OR langchain OR llamaindex OR "tool use" OR "function calling" OR "prompt engineering" OR "fine-tuning" OR "fine tuning" OR embeddings OR "code generation" OR "AI coding" OR "AI assistant" OR "local LLM" OR ollama OR litellm OR "open source model")'
 
 const RSS_DEV: RssFeedDef[] = [
   { url: 'https://github.blog/feed/', source: 'github-blog' },
@@ -178,6 +252,11 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
       rss = uniqByUrl([...rss, ...RSS_AI])
       subs = uniqSubs([...subs, ...REDDIT_AI])
       hnQuery = `${HN_QUERY_DEFAULT} OR ${HN_QUERY_AI}`
+      break
+    case 'ai_dev':
+      rss = uniqByUrl([...rss, ...RSS_AI_DEV, ...RSS_AI])
+      subs = uniqSubs([...subs, ...REDDIT_AI_DEV, ...REDDIT_AI])
+      hnQuery = `${HN_QUERY_DEFAULT} OR ${HN_QUERY_AI} OR ${HN_QUERY_AI_DEV}`
       break
     case 'developer':
       rss = uniqByUrl([...rss, ...RSS_DEV])

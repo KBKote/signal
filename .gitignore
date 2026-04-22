@@ -45,3 +45,4 @@ lighthouse-report.json
 
 # Cursor agent debug NDJSON (written by dev-only API routes)
 .cursor/debug*.log
+.cursor/playwright-mcp.log

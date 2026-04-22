@@ -20,13 +20,61 @@ function intEnv(name: string, fallback: number, cap: number): number {
   return Math.min(n, cap)
 }
 
-const RAW_FETCH_LIMIT = intEnv('FILTER_RAW_FETCH_LIMIT', 400, 800)
-const MAX_CANDIDATES = intEnv('FILTER_MAX_CANDIDATES', 80, 200)
+const RAW_FETCH_LIMIT = intEnv('FILTER_RAW_FETCH_LIMIT', 400, 3000)
+const MAX_CANDIDATES = intEnv('FILTER_MAX_CANDIDATES', 80, 300)
 /** Max age in days for a story to be eligible for scoring. Stories older than this are skipped. */
 const MAX_STORY_AGE_DAYS = intEnv('FEED_MAX_AGE_DAYS', 7, 30)
 /** Avoid hanging forever if Anthropic is slow or unreachable. */
 const BATCH_TIMEOUT_MS = 120_000
 const BATCH_CONCURRENCY = 2
+
+/** PostgREST encodes .in() as a URL param — chunk to stay under server URL length limits. */
+const IN_CHUNK_SIZE = 200
+
+async function fetchScoredIds(
+  db: ReturnType<typeof getSupabaseAdmin>,
+  userId: string,
+  ids: string[]
+): Promise<Set<string>> {
+  const done = new Set<string>()
+  for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + IN_CHUNK_SIZE)
+    const { data } = await db
+      .from('user_raw_scored')
+      .select('raw_story_id')
+      .eq('user_id', userId)
+      .in('raw_story_id', chunk)
+    for (const row of data ?? []) done.add(row.raw_story_id as string)
+  }
+  return done
+}
+
+async function fetchRecencyCandidates(
+  db: ReturnType<typeof getSupabaseAdmin>,
+  userId: string,
+  maxForRun: number
+): Promise<RawStory[]> {
+  const { data: raws, error: fetchError } = await db
+    .from('raw_stories')
+    .select('id, title, url, source, raw_text, published_at')
+    .order('scraped_at', { ascending: false })
+    .limit(RAW_FETCH_LIMIT)
+
+  if (fetchError) throw new Error(`Failed to fetch raw stories: ${fetchError.message}`)
+  if (!raws?.length) return []
+
+  const ids = raws.map((r) => r.id)
+  const done = await fetchScoredIds(db, userId, ids)
+  const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
+
+  return raws
+    .filter((r) => !done.has(r.id))
+    .filter((r) => {
+      if (!r.published_at) return true
+      return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
+    })
+    .slice(0, maxForRun)
+}
 
 export type PoolStateCounts = {
   rawWindow: number
@@ -54,15 +102,7 @@ export async function computePoolStateCounts(userId: string): Promise<PoolStateC
   if (!raws?.length) return { rawWindow: 0, scoredInWindow: 0, unscoredEligible: 0 }
 
   const ids = raws.map((r) => r.id)
-  const { data: doneRows, error: doneError } = await db
-    .from('user_raw_scored')
-    .select('raw_story_id')
-    .eq('user_id', userId)
-    .in('raw_story_id', ids)
-
-  if (doneError) throw new Error(`Failed to fetch user_raw_scored: ${doneError.message}`)
-
-  const done = new Set((doneRows ?? []).map((d) => d.raw_story_id as string))
+  const done = await fetchScoredIds(db, userId, ids)
   const scoredInWindow = done.size
 
   const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
@@ -191,6 +231,16 @@ interface RawStory {
   url: string
   source: string
   raw_text: string
+  published_at: string | null
+}
+
+/** Row shape from `match_stories_for_user` RPC (id type may vary by DB). */
+interface VectorMatchRow {
+  id: string | number
+  title: string | null
+  url: string | null
+  source: string | null
+  raw_text: string | null
   published_at: string | null
 }
 
@@ -337,42 +387,56 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
         )
       : envBatchDefault
 
-  const { data: raws, error: fetchError } = await db
-    .from('raw_stories')
-    .select('id, title, url, source, raw_text, published_at')
-    .order('scraped_at', { ascending: false })
-    .limit(RAW_FETCH_LIMIT)
-
-  if (fetchError) throw new Error(`Failed to fetch raw stories: ${fetchError.message}`)
-  if (!raws?.length) {
-    return {
-      processed: 0,
-      stored: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      estimatedCost: 0,
-      claudeParseFailures: 0,
-      totalBatches: 0,
-      parseFailureBatchIndices: [],
-    }
-  }
-
-  const ids = raws.map((r) => r.id)
-  const { data: doneRows } = await db
-    .from('user_raw_scored')
-    .select('raw_story_id')
+  // Try vector search if user has a profile embedding
+  const { data: profileMeta } = await db
+    .from('user_profiles')
+    .select('profile_embedding')
     .eq('user_id', ctx.userId)
-    .in('raw_story_id', ids)
+    .single()
 
-  const done = new Set((doneRows ?? []).map((d) => d.raw_story_id as string))
-  const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
-  const candidates = raws
-    .filter((r) => !done.has(r.id))
-    .filter((r) => {
-      if (!r.published_at) return true
-      return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
+  let candidates: RawStory[]
+  const MIN_VECTOR_RESULTS = 20
+
+  if (profileMeta?.profile_embedding) {
+    const { data: vectorRows, error: vecErr } = await db.rpc('match_stories_for_user', {
+      p_user_id: ctx.userId,
+      p_embedding: profileMeta.profile_embedding,
+      p_match_count: maxForRun,
     })
-    .slice(0, maxForRun)
+
+    if (!vecErr && vectorRows && vectorRows.length >= MIN_VECTOR_RESULTS) {
+      // Apply age filter (RPC doesn't filter by age)
+      const maxAgeMs = MAX_STORY_AGE_DAYS * 24 * 60 * 60 * 1000
+      candidates = (vectorRows as VectorMatchRow[]).map((r) => ({
+        id: String(r.id),
+        title: r.title ?? '',
+        url: r.url ?? '',
+        source: r.source ?? '',
+        raw_text: r.raw_text ?? '',
+        published_at: r.published_at
+          ? typeof r.published_at === 'string'
+            ? r.published_at
+            : new Date(r.published_at).toISOString()
+          : null,
+      }))
+      candidates = candidates.filter((r) => {
+        if (!r.published_at) return true
+        return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
+      })
+      console.log(`[Filter] Vector search: ${candidates.length} candidates for user ${ctx.userId.slice(0, 8)}…`)
+    } else {
+      if (vecErr)
+        console.warn('[Filter] Vector search failed, falling back to recency:', vecErr.message)
+      else
+        console.log(
+          `[Filter] Vector returned only ${vectorRows?.length ?? 0} results (<${MIN_VECTOR_RESULTS}), falling back to recency`
+        )
+      candidates = await fetchRecencyCandidates(db, ctx.userId, maxForRun)
+    }
+  } else {
+    console.log(`[Filter] No profile embedding for user ${ctx.userId.slice(0, 8)}… — using recency fallback`)
+    candidates = await fetchRecencyCandidates(db, ctx.userId, maxForRun)
+  }
 
   if (candidates.length === 0) {
     return {

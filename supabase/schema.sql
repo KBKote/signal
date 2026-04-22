@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS raw_stories (
   title        text NOT NULL,
   url          text UNIQUE NOT NULL,
   source       text,
+  summary      text,
   raw_text     text,
   published_at timestamptz,
   scraped_at   timestamptz DEFAULT now()

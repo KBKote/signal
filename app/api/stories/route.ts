@@ -123,9 +123,6 @@ export async function GET(request: Request) {
 
   const fetchLimit = limit + 1
   let rows: ScoredStoryRow[] = []
-  console.log(
-    `[/api/stories] published_at freshness cutoff=${publishedCutoff} (FEED_MAX_AGE_DAYS=${FEED_MAX_AGE_DAYS}); RPC api_scored_stories_page does not apply this filter yet`
-  )
   const { data: rpcData, error: rpcError } = await getSupabaseAdmin().rpc('api_scored_stories_page', {
     p_user_id: user.id,
     p_limit: fetchLimit,
@@ -134,6 +131,7 @@ export async function GET(request: Request) {
     p_cursor_score: cursor?.score ?? null,
     p_cursor_scored_at: cursor?.scored_at ?? null,
     p_cursor_id: cursor?.id ?? null,
+    p_published_cutoff: publishedCutoff,
   })
 
   if (rpcError) {

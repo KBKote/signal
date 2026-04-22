@@ -58,6 +58,7 @@ export default function LiveFeedPage() {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [runningPipeline, setRunningPipeline] = useState(false)
+  const [scrapingFresh, setScrapingFresh] = useState(false)
   const [pipelineMessage, setPipelineMessage] = useState('Control room online.')
   const [pipeSteps, setPipeSteps] = useState(INITIAL_PIPE_STEPS)
   const [pipelinePrefs, setPipelinePrefs] = useState<PipelinePreferences>(DEFAULT_PIPELINE_PREFS)
@@ -340,6 +341,41 @@ export default function LiveFeedPage() {
     }
   }, [fetchStories, fetchPoolState, pipelinePrefs, pipelineRunTuning, hasAnthropicKey])
 
+  const scrapeFresh = useCallback(async () => {
+    if (scrapingFresh || runningPipeline) return
+    setScrapingFresh(true)
+    setPipelineMessage('Scraping fresh stories…')
+    try {
+      const res = await fetch('/api/scrape', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
+      })
+      const j = (await res.json().catch(() => ({}))) as {
+        inserted?: number
+        total_collected?: number
+        error?: string
+      }
+      if (!res.ok) {
+        setPipelineMessage(
+          res.status === 429
+            ? 'Scrape rate-limited — wait 2 min between scrapes.'
+            : (typeof j.error === 'string' ? j.error : 'Scrape failed.')
+        )
+      } else {
+        setPipelineMessage(
+          `Scraped ${j.total_collected ?? 0} stories, ${j.inserted ?? 0} new. Pool refreshed.`
+        )
+        await fetchPoolState()
+      }
+    } catch {
+      setPipelineMessage('Scrape failed — check logs.')
+    } finally {
+      setScrapingFresh(false)
+    }
+  }, [scrapingFresh, runningPipeline, pipelinePrefs, pipelineRunTuning, fetchPoolState])
+
   useEffect(() => {
     const id = window.setTimeout(() => {
       void fetchStories()
@@ -395,7 +431,7 @@ export default function LiveFeedPage() {
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={runPipeline}
-              disabled={runningPipeline || !canRun}
+              disabled={runningPipeline || scrapingFresh || !canRun}
               title={
                 !hasAnthropicKey
                   ? 'Add your Anthropic key in Settings'
@@ -408,10 +444,12 @@ export default function LiveFeedPage() {
               {runningPipeline ? 'Running...' : 'Run Pipeline'}
             </button>
             <button
-              onClick={() => void fetchStories()}
-              className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/10"
+              onClick={() => void scrapeFresh()}
+              disabled={scrapingFresh || runningPipeline}
+              title="Pull fresh stories from all sources into the pool"
+              className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Refresh Feed
+              {scrapingFresh ? 'Scraping…' : 'Scrape Fresh'}
             </button>
             <Link
               href="/settings"
