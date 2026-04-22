@@ -159,7 +159,7 @@ export default function DocsPage() {
   └── Vector search (pgvector cosine similarity)
       OR recency fallback (pool too small)
   └── Pre-filter by keyword (halves token usage)
-  └── Claude Haiku batch scoring (~24 stories/batch)
+  └── Claude Haiku batch scoring (24–40 stories/call from token budget presets)
   └── scored_stories (per user_id)
          │
          ▼
@@ -245,7 +245,8 @@ export default function DocsPage() {
                     <div>
                       <p className="font-medium text-zinc-200 mb-1">3. Haiku batch scoring</p>
                       <p>
-                        Stories are batched (~24 per call) and scored by <Code>claude-haiku-4-5</Code> using
+                        Stories are batched (24–40 per call, from your token budget preset) and scored by{' '}
+                        <Code>claude-haiku-4-5</Code> (override with <Code>ANTHROPIC_HAIKU_MODEL</Code>) using
                         your <Code>scoring_markdown</Code> profile as the scoring rubric. Each story gets a
                         score 1–10, a category (opportunity / idea / intel / noise), and a brief{' '}
                         <span className="text-zinc-200">&ldquo;why it matters&rdquo;</span>.
@@ -271,7 +272,9 @@ export default function DocsPage() {
                     ].map((p) => (
                       <div key={p.preset} className="rounded-xl border border-white/8 bg-white/[0.03] p-4">
                         <p className="font-medium text-zinc-100 text-sm">{p.preset}</p>
-                        <p className="mt-1 font-mono text-xs text-zinc-500">{p.candidates} candidates</p>
+                        <p className="mt-1 font-mono text-xs text-zinc-500">
+                          {p.candidates} candidates · {p.batch}/batch
+                        </p>
                         <p className="font-mono text-xs text-zinc-600">{p.tokens}</p>
                       </div>
                     ))}
@@ -375,13 +378,13 @@ LIMIT p_match_count;`}</Pre>
                     method: 'POST',
                     path: '/api/scrape',
                     auth: 'Session',
-                    desc: 'Trigger a scrape run. Fetches RSS feeds, Reddit, and HN; deduplicates by URL; generates embeddings for new stories. Rate-limited to 2 minutes per user.',
+                    desc: 'Trigger a scrape run. Fetches RSS feeds, Reddit, and HN; deduplicates by URL; generates embeddings for new stories. Optional JSON body: pipeline prefs plus fullSources: true to scrape the union of all topic packs (feed “scrape fresh”). Rate-limited to 2 minutes per user.',
                   },
                   {
                     method: 'POST',
                     path: '/api/filter',
                     auth: 'Session + BYOK',
-                    desc: 'Run the scoring pipeline. Selects candidates via vector search, pre-filters by keyword, batches to Claude Haiku. Rate-limited to 90 seconds per user.',
+                    desc: 'Run the scoring pipeline. Selects candidates via vector search, pre-filters by keyword, batches to Claude Haiku. JSON body includes topic/scope prefs and optional maxCandidates/batchSize (capped by FILTER_MAX_CANDIDATES on the host). Rate-limited to 90 seconds per user.',
                   },
                   {
                     method: 'GET',
@@ -458,9 +461,10 @@ VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:you@example.com
 
 # Optional tuning
-FILTER_RAW_FETCH_LIMIT=800   # max stories considered per run
-FILTER_MAX_CANDIDATES=300    # server ceiling for candidates per run (default 300; lower to save cost)
-FEED_MAX_AGE_DAYS=7          # story age window`}</Pre>
+FILTER_RAW_FETCH_LIMIT=800   # max raw rows fetched before age/unscored filters (default 400, cap 3000)
+FILTER_MAX_CANDIDATES=300    # server ceiling for scored candidates per run (default 300; must be ≥ Deep preset)
+FILTER_BATCH_SIZE=28         # default Haiku batch when client omits batchSize (cap 40)
+FEED_MAX_AGE_DAYS=7          # story age window (filter + stories API; cap 30 in filter)`}</Pre>
               </div>
             </Section>
 
@@ -513,6 +517,9 @@ npm install`}</Pre>
                   <p className="text-sm text-zinc-400 mb-3">Run these SQL files in the Supabase editor in order:</p>
                   <div className="space-y-1 font-mono text-xs text-zinc-500">
                     {[
+                      '20260410120000_auth_byok.sql',
+                      '20260410120001_user_raw_scored.sql',
+                      '20260410140000_enable_rls_pool_tables.sql',
                       '20260411120000_scrape_user_throttle.sql',
                       '20260411130000_filter_user_throttle.sql',
                       '20260411140000_api_scored_stories_page.sql',
