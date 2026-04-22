@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { scrapeAccessDeniedResponse } from '@/lib/scrape-auth'
 import { runRetentionCleanup } from '@/lib/db-cleanup'
 import { DEFAULT_PIPELINE_PREFS, parsePipelinePreferencesBody } from '@/lib/pipeline-preferences'
-import { getScrapePack } from '@/lib/scrape-sources'
+import { getFullScrapePack, getScrapePack } from '@/lib/scrape-sources'
 import { scrapeRssFeeds } from '@/lib/scraper/rss'
 import { scrapeReddit } from '@/lib/scraper/reddit'
 import { scrapeHackerNews } from '@/lib/scraper/hn'
@@ -16,19 +16,25 @@ export async function POST(request: Request) {
   if (denied) return denied
 
   let prefs = DEFAULT_PIPELINE_PREFS
+  let fullSources = false
   try {
     const ct = request.headers.get('content-type') ?? ''
     if (ct.includes('application/json')) {
       const raw: unknown = await request.json()
+      if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).fullSources === true) {
+        fullSources = true
+      }
       prefs = parsePipelinePreferencesBody(raw)
     }
   } catch {
     prefs = DEFAULT_PIPELINE_PREFS
   }
 
-  const pack = getScrapePack(prefs)
+  const pack = fullSources ? getFullScrapePack() : getScrapePack(prefs)
   console.log(
-    `[Scrape] topicMode=${prefs.topicMode} rss=${pack.rssFeeds.length} subs=${pack.subreddits.length}`
+    fullSources
+      ? `[Scrape] fullSources rss=${pack.rssFeeds.length} subs=${pack.subreddits.length}`
+      : `[Scrape] topicMode=${prefs.topicMode} rss=${pack.rssFeeds.length} subs=${pack.subreddits.length}`
   )
 
   const startTime = Date.now()
@@ -140,6 +146,7 @@ export async function POST(request: Request) {
       total_collected: freshStories.length,
       dropped_old: droppedOld,
       elapsed_seconds: parseFloat(elapsed),
+      fullSources,
       breakdown: {
         rss: rssStories.length,
         reddit: redditStories.length,

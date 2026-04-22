@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import {
   buildPreferenceOverlay,
   DEFAULT_PIPELINE_PREFS,
+  DEFAULT_PIPELINE_RUN_TUNING,
   FILTER_RUN_BATCH_ABS_MAX,
   FILTER_RUN_BATCH_MIN,
   FILTER_RUN_MAX_CANDIDATES_MIN,
@@ -21,7 +22,8 @@ function intEnv(name: string, fallback: number, cap: number): number {
 }
 
 const RAW_FETCH_LIMIT = intEnv('FILTER_RAW_FETCH_LIMIT', 400, 3000)
-const MAX_CANDIDATES = intEnv('FILTER_MAX_CANDIDATES', 80, 300)
+/** Server ceiling for candidates per run; default 300 so Light/Standard/Deep presets are not clamped. Lower via `FILTER_MAX_CANDIDATES` to save cost. */
+const MAX_CANDIDATES = intEnv('FILTER_MAX_CANDIDATES', 300, 300)
 /** Max age in days for a story to be eligible for scoring. Stories older than this are skipped. */
 const MAX_STORY_AGE_DAYS = intEnv('FEED_MAX_AGE_DAYS', 7, 30)
 /** Avoid hanging forever if Anthropic is slow or unreachable. */
@@ -80,6 +82,10 @@ export type PoolStateCounts = {
   rawWindow: number
   scoredInWindow: number
   unscoredEligible: number
+  /** Same cap as scoring: `FEED_MAX_AGE_DAYS` (1–30). */
+  feedMaxAgeDays: number
+  /** Same window as scoring: `FILTER_RAW_FETCH_LIMIT` newest-by-scrape rows. */
+  rawFetchLimit: number
 }
 
 /**
@@ -98,8 +104,9 @@ export async function computePoolStateCounts(userId: string): Promise<PoolStateC
 
   if (fetchError) throw new Error(`Failed to fetch raw stories: ${fetchError.message}`)
 
+  const meta = { feedMaxAgeDays: MAX_STORY_AGE_DAYS, rawFetchLimit: RAW_FETCH_LIMIT }
   const rawWindow = raws?.length ?? 0
-  if (!raws?.length) return { rawWindow: 0, scoredInWindow: 0, unscoredEligible: 0 }
+  if (!raws?.length) return { rawWindow: 0, scoredInWindow: 0, unscoredEligible: 0, ...meta }
 
   const ids = raws.map((r) => r.id)
   const done = await fetchScoredIds(db, userId, ids)
@@ -113,7 +120,7 @@ export async function computePoolStateCounts(userId: string): Promise<PoolStateC
       return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
     }).length
 
-  return { rawWindow, scoredInWindow, unscoredEligible }
+  return { rawWindow, scoredInWindow, unscoredEligible, ...meta }
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -259,7 +266,7 @@ export interface RunFilterContext {
   /** Full profile block (defaults + onboarding) */
   userPrompt: string
   prefs?: PipelinePreferences
-  /** Per-run cap (clamped to env `FILTER_MAX_CANDIDATES` and min 40). Omit = use env default. */
+  /** Per-run cap (clamped to env `FILTER_MAX_CANDIDATES`, default 300, min 40). Omit = use env ceiling. */
   maxCandidates?: number
   /** Haiku batch size (clamped 10–40 and ≤ max for run). Omit = use env default. */
   batchSize?: number
@@ -363,6 +370,18 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
   claudeParseFailures: number
   totalBatches: number
   parseFailureBatchIndices: number[]
+  /** `vector` = top-N by embedding vs profile; `recency` = newest in raw window (not relevance-ranked). */
+  candidateSource: 'vector' | 'recency'
+  /** Present when candidateSource is recency but a profile embedding exists or was attempted. */
+  vectorFallbackReason?: string
+  /** Max candidates this run was allowed to score (`maxCandidates` × env cap). */
+  candidateCap: number
+  /** Actual raw rows sent to Haiku (≤ candidateCap — smaller when the unscored pool is small). */
+  candidatePoolSize: number
+  /** Haiku batch size used for this run. */
+  batchSizeUsed: number
+  /** `FILTER_MAX_CANDIDATES` env ceiling (default 300); client `maxCandidates` cannot exceed this. */
+  serverEnvMaxCandidates: number
 }> {
   const prefs = ctx.prefs ?? DEFAULT_PIPELINE_PREFS
   const minStoreScore = minScoreToStoreForScope(prefs.scope)
@@ -370,15 +389,28 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
   const db = getSupabaseAdmin()
 
   const maxCandidatesCap = MAX_CANDIDATES
+  const defaultRunMax = Math.min(DEFAULT_PIPELINE_RUN_TUNING.maxCandidates, maxCandidatesCap)
   const maxForRun =
     ctx.maxCandidates != null
       ? Math.min(
           Math.max(FILTER_RUN_MAX_CANDIDATES_MIN, Math.round(ctx.maxCandidates)),
           maxCandidatesCap
         )
-      : maxCandidatesCap
+      : defaultRunMax
 
-  const envBatchDefault = Math.min(intEnv('FILTER_BATCH_SIZE', 24, 40), maxForRun)
+  if (ctx.maxCandidates != null) {
+    const requested = Math.round(ctx.maxCandidates)
+    if (requested > maxForRun) {
+      console.warn(
+        `[Filter] maxCandidates requested (${requested}) exceeds server ceiling (${maxForRun}). Raise FILTER_MAX_CANDIDATES on the host (Vercel env) or deploy a higher cap.`
+      )
+    }
+  }
+
+  const envBatchDefault = Math.min(
+    intEnv('FILTER_BATCH_SIZE', DEFAULT_PIPELINE_RUN_TUNING.batchSize, FILTER_RUN_BATCH_ABS_MAX),
+    maxForRun
+  )
   const batchForRun =
     ctx.batchSize != null
       ? Math.max(
@@ -396,6 +428,8 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
 
   let candidates: RawStory[]
   const MIN_VECTOR_RESULTS = 20
+  let candidateSource: 'vector' | 'recency' = 'recency'
+  let vectorFallbackReason: string | undefined
 
   if (profileMeta?.profile_embedding) {
     const { data: vectorRows, error: vecErr } = await db.rpc('match_stories_for_user', {
@@ -423,17 +457,22 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
         if (!r.published_at) return true
         return Date.now() - new Date(r.published_at).getTime() < maxAgeMs
       })
+      candidateSource = 'vector'
       console.log(`[Filter] Vector search: ${candidates.length} candidates for user ${ctx.userId.slice(0, 8)}…`)
     } else {
-      if (vecErr)
+      if (vecErr) {
+        vectorFallbackReason = vecErr.message
         console.warn('[Filter] Vector search failed, falling back to recency:', vecErr.message)
-      else
+      } else {
+        vectorFallbackReason = `vector_hits_${vectorRows?.length ?? 0}_below_min_${MIN_VECTOR_RESULTS}`
         console.log(
           `[Filter] Vector returned only ${vectorRows?.length ?? 0} results (<${MIN_VECTOR_RESULTS}), falling back to recency`
         )
+      }
       candidates = await fetchRecencyCandidates(db, ctx.userId, maxForRun)
     }
   } else {
+    vectorFallbackReason = 'no_profile_embedding'
     console.log(`[Filter] No profile embedding for user ${ctx.userId.slice(0, 8)}… — using recency fallback`)
     candidates = await fetchRecencyCandidates(db, ctx.userId, maxForRun)
   }
@@ -448,8 +487,16 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
       claudeParseFailures: 0,
       totalBatches: 0,
       parseFailureBatchIndices: [],
+      candidateSource,
+      ...(vectorFallbackReason ? { vectorFallbackReason } : {}),
+      candidateCap: maxForRun,
+      candidatePoolSize: 0,
+      batchSizeUsed: batchForRun,
+      serverEnvMaxCandidates: maxCandidatesCap,
     }
   }
+
+  const candidatePoolSize = candidates.length
 
   console.log(
     `[Filter] User ${ctx.userId.slice(0, 8)}… — ${candidates.length} candidates (cap ${maxForRun}), batches of ${batchForRun}, minStoreScore=${minStoreScore}`
@@ -575,5 +622,11 @@ export async function runFilterPipeline(ctx: RunFilterContext): Promise<{
     claudeParseFailures,
     totalBatches,
     parseFailureBatchIndices,
+    candidateSource,
+    ...(vectorFallbackReason ? { vectorFallbackReason } : {}),
+    candidateCap: maxForRun,
+    candidatePoolSize,
+    batchSizeUsed: batchForRun,
+    serverEnvMaxCandidates: maxCandidatesCap,
   }
 }

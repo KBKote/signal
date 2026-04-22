@@ -23,6 +23,18 @@ import { FeedIntro } from '@/components/FeedIntro'
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000
 const STORIES_PAGE_SIZE = 25
 
+/** Static chip copy — what each label means (counts above stay live). */
+const STAT_CHIP_HELP = {
+  stories:
+    'Scored items in your feed right now (this page loads in batches — use Load more for the rest).',
+  opportunities:
+    'Stories Claude tagged as opportunities: concrete edges, launches, or positioning worth acting on or tracking closely.',
+  ideas:
+    'Stories tagged as ideas: directions, projects, or theses worth exploring or building on — less urgent than opportunities.',
+  intel:
+    'Stories tagged as intel: background, trends, and context for awareness — useful to read, not necessarily to act on immediately.',
+} as const
+
 const TERMINAL_LINES = [
   'sources/rss          26 feeds (coindesk, decrypt, huggingface, theblock…)',
   'sources/reddit       19 subreddits (ethereum, LocalLLaMA, ethdev, MEV…)',
@@ -85,6 +97,10 @@ export default function LiveFeedPage() {
     estimatedCost: number
     stored: number
     batches: number
+    candidatePoolSize: number
+    candidateCap: number
+    batchSizeUsed: number
+    serverEnvMaxCandidates: number
   } | null>(null)
   const [lastRunData, setLastRunData] = useState<{
     run_at: string
@@ -103,6 +119,8 @@ export default function LiveFeedPage() {
     unscoredEligible: number
     rawWindow: number
     scoredInWindow: number
+    feedMaxAgeDays: number
+    rawFetchLimit: number
   } | null>(null)
   const pipelineRunningRef = useRef(false)
   /** Prefs from the last successful `/api/filter` (server also stores under `profile.last_pipeline_prefs`). */
@@ -155,12 +173,26 @@ export default function LiveFeedPage() {
       unscoredEligible?: unknown
       rawWindow?: unknown
       scoredInWindow?: unknown
+      feedMaxAgeDays?: unknown
+      rawFetchLimit?: unknown
     }
     if (!res.ok || !j.success) return
-    if (typeof j.unscoredEligible !== 'number' || typeof j.rawWindow !== 'number' || typeof j.scoredInWindow !== 'number') {
+    if (
+      typeof j.unscoredEligible !== 'number' ||
+      typeof j.rawWindow !== 'number' ||
+      typeof j.scoredInWindow !== 'number'
+    ) {
       return
     }
-    setPoolState({ unscoredEligible: j.unscoredEligible, rawWindow: j.rawWindow, scoredInWindow: j.scoredInWindow })
+    const feedMaxAgeDays = typeof j.feedMaxAgeDays === 'number' ? j.feedMaxAgeDays : 7
+    const rawFetchLimit = typeof j.rawFetchLimit === 'number' ? j.rawFetchLimit : 400
+    setPoolState({
+      unscoredEligible: j.unscoredEligible,
+      rawWindow: j.rawWindow,
+      scoredInWindow: j.scoredInWindow,
+      feedMaxAgeDays,
+      rawFetchLimit,
+    })
   }, [])
 
   const fetchStories = useCallback(async (): Promise<boolean> => {
@@ -315,9 +347,11 @@ export default function LiveFeedPage() {
       mark(0, 'done')
 
       mark(1, 'running')
-      const estBatches = Math.ceil(pipelineRunTuning.maxCandidates / pipelineRunTuning.batchSize)
-      logLine(`POST /api/filter — ${pipelineRunTuning.maxCandidates} candidates, ~${estBatches} batches`)
-      logLine(`claude-haiku-4-5 → batch 1/${estBatches} scoring…`)
+      const budgetCap = pipelineRunTuning.maxCandidates
+      const bs = pipelineRunTuning.batchSize
+      logLine(
+        `POST /api/filter — budget up to ${budgetCap} candidates · batch ${bs} (server uses min(budget, unscored pool); one HTTP = all batches)`
+      )
       setPipelineMessage('Step 2 of 3 — scoring with Claude Haiku…')
       const filter = await fetch('/api/filter', {
         method: 'POST',
@@ -334,6 +368,10 @@ export default function LiveFeedPage() {
         totalOutputTokens?: number
         estimatedCost?: number
         totalBatches?: number
+        candidatePoolSize?: number
+        candidateCap?: number
+        batchSizeUsed?: number
+        serverEnvMaxCandidates?: number
       }
       if (!filter.ok) {
         if (filter.status === 429) {
@@ -354,8 +392,22 @@ export default function LiveFeedPage() {
       ) {
         const inK = (filterPayload.totalInputTokens / 1000).toFixed(1)
         const outK = (filterPayload.totalOutputTokens / 1000).toFixed(1)
-        const batches = filterPayload.totalBatches ?? estBatches
-        logLine(`scoring complete \u2713 \u2014 ${batches} batch${batches === 1 ? '' : 'es'} done`)
+        const batches = filterPayload.totalBatches ?? 0
+        const pool = filterPayload.candidatePoolSize ?? 0
+        const cap = filterPayload.candidateCap ?? budgetCap
+        const batchUsed = filterPayload.batchSizeUsed ?? bs
+        logLine(
+          `scoring complete \u2713 \u2014 ${pool} candidates scored (${cap} cap, ${batchUsed}/batch) \u2192 ${batches} Haiku batch${batches === 1 ? '' : 'es'}`
+        )
+        if (pool < cap * 0.75) {
+          logLine(`pool was smaller than your budget — scrape fresh or widen age window to spend more on Deep`)
+        }
+        const srvMax = filterPayload.serverEnvMaxCandidates
+        if (typeof srvMax === 'number' && budgetCap > srvMax) {
+          logLine(
+            `server ceiling is ${srvMax} (FILTER_MAX_CANDIDATES on host) — UI asked for ${budgetCap}; add or raise that env in Vercel to match Deep`
+          )
+        }
         logLine(`tokens: ${inK}K in / ${outK}K out \u2014 est. $${(filterPayload.estimatedCost ?? 0).toFixed(4)}`)
         logLine(`stored ${filterPayload.stored ?? 0} stories to your feed`)
         setLastRunStats({
@@ -364,6 +416,10 @@ export default function LiveFeedPage() {
           estimatedCost: filterPayload.estimatedCost ?? 0,
           stored: filterPayload.stored ?? 0,
           batches: filterPayload.totalBatches ?? 0,
+          candidatePoolSize: pool,
+          candidateCap: cap,
+          batchSizeUsed: batchUsed,
+          serverEnvMaxCandidates: filterPayload.serverEnvMaxCandidates ?? cap,
         })
         setLastRunData({
           run_at: new Date().toISOString(),
@@ -419,18 +475,19 @@ export default function LiveFeedPage() {
   const scrapeFresh = useCallback(async () => {
     if (scrapingFresh || runningPipeline) return
     setScrapingFresh(true)
-    setPipelineMessage('Scraping fresh stories…')
+    setPipelineMessage('Scraping all preset sources (not limited to your topic)…')
     try {
       const res = await fetch('/api/scrape', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: filterRequestBody(pipelinePrefs, pipelineRunTuning),
+        body: JSON.stringify({ fullSources: true }),
       })
       const j = (await res.json().catch(() => ({}))) as {
         inserted?: number
         total_collected?: number
         error?: string
+        fullSources?: boolean
       }
       if (!res.ok) {
         setPipelineMessage(
@@ -439,8 +496,9 @@ export default function LiveFeedPage() {
             : (typeof j.error === 'string' ? j.error : 'Scrape failed.')
         )
       } else {
+        const mode = j.fullSources ? 'All preset RSS, Reddit, and HN packs. ' : ''
         setPipelineMessage(
-          `Scraped ${j.total_collected ?? 0} stories, ${j.inserted ?? 0} new. Pool refreshed.`
+          `${mode}Collected ${j.total_collected ?? 0}, ${j.inserted ?? 0} new in the pool.`
         )
         await fetchPoolState()
       }
@@ -449,7 +507,7 @@ export default function LiveFeedPage() {
     } finally {
       setScrapingFresh(false)
     }
-  }, [scrapingFresh, runningPipeline, pipelinePrefs, pipelineRunTuning, fetchPoolState])
+  }, [scrapingFresh, runningPipeline, fetchPoolState])
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -524,7 +582,7 @@ export default function LiveFeedPage() {
             <button
               onClick={() => void scrapeFresh()}
               disabled={scrapingFresh || runningPipeline}
-              title="Pull fresh stories from all sources into the pool"
+              title="Scrape every preset RSS feed, subreddit pack, and HN query at once (ignores topic selection). Rate-limited."
               className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {scrapingFresh ? 'Scraping…' : 'Scrape Fresh'}
@@ -543,26 +601,22 @@ export default function LiveFeedPage() {
           <div className="rounded-2xl border border-white/10 bg-black/50 px-5 py-4 backdrop-blur-md">
             <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">Stories</p>
             <p className="mt-2 font-mono text-4xl font-bold text-zinc-50">{loading ? '—' : stories.length}</p>
-            {poolState && (
-              <p className="mt-1 font-mono text-[10px] text-zinc-600">{poolState.rawWindow.toLocaleString()} in 72h pool</p>
-            )}
+            <p className="mt-1 text-[11px] leading-snug text-zinc-500">{STAT_CHIP_HELP.stories}</p>
           </div>
           <div className="rounded-2xl border border-emerald-500/25 bg-emerald-950/25 px-5 py-4 backdrop-blur-md">
             <p className="font-mono text-[10px] uppercase tracking-widest text-emerald-700">Opportunities</p>
             <p className="mt-2 font-mono text-4xl font-bold text-emerald-400">{loading ? '—' : counts.opportunity}</p>
-            <p className="mt-1 font-mono text-[10px] text-emerald-800">score ≥ 8</p>
+            <p className="mt-1 text-[11px] leading-snug text-emerald-800/90">{STAT_CHIP_HELP.opportunities}</p>
           </div>
           <div className="rounded-2xl border border-sky-500/25 bg-sky-950/25 px-5 py-4 backdrop-blur-md">
             <p className="font-mono text-[10px] uppercase tracking-widest text-sky-700">Ideas</p>
             <p className="mt-2 font-mono text-4xl font-bold text-sky-400">{loading ? '—' : counts.idea}</p>
-            <p className="mt-1 font-mono text-[10px] text-sky-800">score 5–7</p>
+            <p className="mt-1 text-[11px] leading-snug text-sky-800/90">{STAT_CHIP_HELP.ideas}</p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-black/50 px-5 py-4 backdrop-blur-md">
             <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">Intel</p>
             <p className="mt-2 font-mono text-4xl font-bold text-zinc-300">{loading ? '—' : counts.intel}</p>
-            {poolState && (
-              <p className="mt-1 font-mono text-[10px] text-zinc-700">{poolState.unscoredEligible.toLocaleString()} unscored</p>
-            )}
+            <p className="mt-1 text-[11px] leading-snug text-zinc-500">{STAT_CHIP_HELP.intel}</p>
           </div>
         </div>
 
@@ -647,19 +701,43 @@ export default function LiveFeedPage() {
                         <span className="text-xs text-zinc-500">Batches run</span>
                         <span className="font-mono text-xs text-zinc-400">{lastRunStats.batches}</span>
                       </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500">Candidates (actual / cap)</span>
+                        <span className="font-mono text-xs text-zinc-400">
+                          {lastRunStats.candidatePoolSize} / {lastRunStats.candidateCap}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500">Batch size used</span>
+                        <span className="font-mono text-xs text-zinc-400">{lastRunStats.batchSizeUsed}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500">Host max (FILTER_MAX_CANDIDATES)</span>
+                        <span className="font-mono text-xs text-zinc-400">
+                          {lastRunStats.serverEnvMaxCandidates}
+                        </span>
+                      </div>
                     </>
                   )}
                   {poolState && (
                     <>
                       <div className="h-px bg-white/5" />
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-zinc-500">Pool (72h window)</span>
-                        <span className="font-mono text-xs text-zinc-400">{poolState.rawWindow.toLocaleString()} stories</span>
+                        <span className="text-xs text-zinc-500">Shared raw pool</span>
+                        <span className="font-mono text-xs text-zinc-400">
+                          {poolState.rawWindow.toLocaleString()}
+                        </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-zinc-500">Unscored eligible</span>
-                        <span className="font-mono text-xs text-zinc-400">{poolState.unscoredEligible.toLocaleString()}</span>
+                        <span className="text-xs text-zinc-500">Unscored for you</span>
+                        <span className="font-mono text-xs text-zinc-400">
+                          {poolState.unscoredEligible.toLocaleString()}
+                        </span>
                       </div>
+                      <p className="text-[10px] leading-snug text-zinc-600">
+                        Pool rules: published ≤ {poolState.feedMaxAgeDays}d when dated · newest{' '}
+                        {poolState.rawFetchLimit.toLocaleString()} by scrape time (same as scoring).
+                      </p>
                     </>
                   )}
                 </div>

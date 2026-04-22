@@ -458,7 +458,7 @@ VAPID_SUBJECT=mailto:you@example.com
 
 # Optional tuning
 FILTER_RAW_FETCH_LIMIT=800   # max stories considered per run
-FILTER_MAX_CANDIDATES=150    # max candidates scored per run
+FILTER_MAX_CANDIDATES=300    # server ceiling for candidates per run (default 300; lower to save cost)
 FEED_MAX_AGE_DAYS=7          # story age window`}</Pre>
               </div>
             </Section>

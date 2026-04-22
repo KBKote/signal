@@ -133,6 +133,14 @@ export async function POST(request: Request) {
       estimatedCost: result.estimatedCost,
       totalBatches: result.totalBatches,
       notified,
+      candidateSource: result.candidateSource,
+      candidateCap: result.candidateCap,
+      candidatePoolSize: result.candidatePoolSize,
+      batchSizeUsed: result.batchSizeUsed,
+      serverEnvMaxCandidates: result.serverEnvMaxCandidates,
+      ...(result.vectorFallbackReason
+        ? { vectorFallbackReason: result.vectorFallbackReason }
+        : {}),
       ...(result.claudeParseFailures > 0
         ? {
             parseWarning: `Claude returned ${result.claudeParseFailures} of ${result.totalBatches} batch(es) that could not be parsed as JSON (batch${result.parseFailureBatchIndices.length === 1 ? '' : 'es'} ${result.parseFailureBatchIndices.join(', ')}); check server logs.`,

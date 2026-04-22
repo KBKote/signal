@@ -34,15 +34,15 @@ export const DEFAULT_PIPELINE_PREFS: PipelinePreferences = {
   scope: 'balanced',
 }
 
-/** How many raw candidates to score per run, and Haiku batch size (must align with server defaults in `lib/filter.ts`). */
+/** How many raw candidates to score per run, and Haiku batch size (server caps via `FILTER_MAX_CANDIDATES`, default 300). */
 export interface PipelineRunTuning {
   maxCandidates: number
   batchSize: number
 }
 
 export const DEFAULT_PIPELINE_RUN_TUNING: PipelineRunTuning = {
-  maxCandidates: 80,
-  batchSize: 24,
+  maxCandidates: 200,
+  batchSize: 28,
 }
 
 export const BUDGET_PRESETS = ['light', 'standard', 'deep'] as const
@@ -50,15 +50,40 @@ export const BUDGET_PRESETS = ['light', 'standard', 'deep'] as const
 export type BudgetPreset = (typeof BUDGET_PRESETS)[number]
 
 export const BUDGET_PRESET_TUNING: Record<BudgetPreset, PipelineRunTuning> = {
-  light: { maxCandidates: 40, batchSize: 20 },
-  standard: { maxCandidates: 80, batchSize: 24 },
-  deep: { maxCandidates: 150, batchSize: 30 },
+  light: { maxCandidates: 80, batchSize: 24 },
+  standard: { maxCandidates: 200, batchSize: 28 },
+  deep: { maxCandidates: 300, batchSize: 40 },
+}
+
+/** Calibrated from real filter runs (Haiku JSON + profile overlay; varies with story text). */
+const HA_INPUT_PER_CANDIDATE = 210
+const HA_OUTPUT_PER_CANDIDATE = 125
+const HA_RUN_INPUT_OVERHEAD = 7000
+
+/** Rough token totals if the unscored pool fills `maxCandidates` for one run. */
+export function estimateHaikuTokensForRun(maxCandidates: number): { input: number; output: number } {
+  const n = Math.max(0, Math.round(maxCandidates))
+  return {
+    input: Math.round(n * HA_INPUT_PER_CANDIDATE + HA_RUN_INPUT_OVERHEAD),
+    output: Math.round(n * HA_OUTPUT_PER_CANDIDATE),
+  }
+}
+
+function formatTokenK(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}K` : String(n)
+}
+
+/** One-line hint aligned to `BUDGET_PRESET_TUNING` numbers (cost scales down if the pool is smaller). */
+export function buildBudgetHint(tuning: PipelineRunTuning): string {
+  const batches = Math.ceil(tuning.maxCandidates / tuning.batchSize)
+  const { input, output } = estimateHaikuTokensForRun(tuning.maxCandidates)
+  return `${tuning.maxCandidates} max candidates · ${tuning.batchSize}/batch · ~${batches} Haiku calls when pool fills · ~${formatTokenK(input)} in / ~${formatTokenK(output)} out (est.)`
 }
 
 export const BUDGET_PRESET_LABELS: Record<BudgetPreset, { label: string; hint: string }> = {
-  light:    { label: 'Light',    hint: '~6.5K in / 4.5K out' },
-  standard: { label: 'Standard', hint: '~13K in / 9K out' },
-  deep:     { label: 'Deep',     hint: '~25K in / 17K out' },
+  light: { label: 'Light', hint: buildBudgetHint(BUDGET_PRESET_TUNING.light) },
+  standard: { label: 'Standard', hint: buildBudgetHint(BUDGET_PRESET_TUNING.standard) },
+  deep: { label: 'Deep', hint: buildBudgetHint(BUDGET_PRESET_TUNING.deep) },
 }
 
 /** Return the matching preset name for a PipelineRunTuning, or null if custom. */
@@ -72,7 +97,7 @@ export function matchBudgetPreset(tuning: PipelineRunTuning): BudgetPreset | nul
 
 /** Allowed UI/API range for `maxCandidates` (server still caps by `FILTER_MAX_CANDIDATES` env). */
 export const FILTER_RUN_MAX_CANDIDATES_MIN = 40
-export const FILTER_RUN_MAX_CANDIDATES_ABS_MAX = 200
+export const FILTER_RUN_MAX_CANDIDATES_ABS_MAX = 300
 
 export const FILTER_RUN_BATCH_MIN = 10
 export const FILTER_RUN_BATCH_ABS_MAX = 40
@@ -242,7 +267,7 @@ function numFromJsonField(v: unknown): number | undefined {
 
 /**
  * Parse `POST /api/filter` JSON: topic prefs plus optional per-run tuning.
- * Omitted tuning fields mean "use server defaults" (`FILTER_MAX_CANDIDATES` / `FILTER_BATCH_SIZE`).
+ * Omitted tuning fields mean "use Standard preset defaults" (same as `DEFAULT_PIPELINE_RUN_TUNING`), still capped by `FILTER_MAX_CANDIDATES` on the server.
  */
 export function parseFilterRequestPayload(body: unknown): {
   prefs: PipelinePreferences
@@ -256,10 +281,21 @@ export function parseFilterRequestPayload(body: unknown): {
   const o = body as Record<string, unknown>
   const rawMax = numFromJsonField(o.maxCandidates)
   const rawBatch = numFromJsonField(o.batchSize)
+  let maxCandidates: number | undefined
+  let batchSize: number | undefined
+  if (rawMax !== undefined) {
+    maxCandidates = Math.min(
+      Math.max(rawMax, FILTER_RUN_MAX_CANDIDATES_MIN),
+      FILTER_RUN_MAX_CANDIDATES_ABS_MAX
+    )
+  }
+  if (rawBatch !== undefined) {
+    batchSize = Math.min(Math.max(rawBatch, FILTER_RUN_BATCH_MIN), FILTER_RUN_BATCH_ABS_MAX)
+  }
   return {
     prefs,
-    ...(rawMax !== undefined ? { maxCandidates: rawMax } : {}),
-    ...(rawBatch !== undefined ? { batchSize: rawBatch } : {}),
+    ...(maxCandidates !== undefined ? { maxCandidates } : {}),
+    ...(batchSize !== undefined ? { batchSize } : {}),
   }
 }
 

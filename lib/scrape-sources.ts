@@ -307,6 +307,34 @@ export function getScrapePack(prefs: PipelinePreferences): ScrapePack {
   }
 }
 
+/**
+ * Union of every preset topic pack (RSS + Reddit + widened HN query).
+ * Use for “Scrape fresh” so the pool is not limited to the topic selected for scoring.
+ * Does not add `topicMode: other` Google News feeds (those require custom text).
+ */
+export function getFullScrapePack(): ScrapePack {
+  const rss = uniqByUrl([
+    ...RSS_FEEDS_BASE,
+    ...RSS_MACRO,
+    ...RSS_ETHEREUM,
+    ...RSS_AI,
+    ...RSS_AI_DEV,
+    ...RSS_DEV,
+    ...RSS_OTHER_DISCOVERY,
+  ])
+  const subs = uniqSubs([
+    ...REDDIT_BASE,
+    ...REDDIT_MACRO,
+    ...REDDIT_ETHEREUM,
+    ...REDDIT_AI,
+    ...REDDIT_AI_DEV,
+    ...REDDIT_DEV,
+    ...REDDIT_OTHER_DISCOVERY,
+  ])
+  const hnQuery = `(${HN_QUERY_DEFAULT}) OR (${HN_QUERY_MACRO}) OR (${HN_QUERY_AI}) OR (${HN_QUERY_AI_DEV}) OR (${HN_QUERY_DEV})`
+  return { rssFeeds: rss, subreddits: subs, hnQuery }
+}
+
 export const NITTER_USERNAMES: readonly string[] = [
   'VitalikButerin',
   'gakonst',
