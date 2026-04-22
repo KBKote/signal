@@ -49,26 +49,13 @@ export function PipelinePreferencesPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/40 p-4 text-zinc-100 md:p-5">
-      <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">Pipeline preferences</p>
-      <p className="mt-1 text-sm text-zinc-400">
-        Applied when scoring with Claude Haiku over stories from{' '}
-        <span className="font-medium text-zinc-200">RSS feeds, Reddit, and Hacker News</span> — not Twitter/X or
-        arbitrary web search. Topic emphasis also widens which outlets and subreddits we pull from (e.g. macro adds
-        business finance RSS and investing subs). Custom text adds a Google News RSS slice plus keyword matching for
-        your terms.
-      </p>
-      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-        When you click <span className="font-medium text-zinc-300">Run Pipeline</span>, if topic or focus calibration
-        changed since your last successful run, Signal will ask to clear your scoring progress and re-score the shared
-        pool (same effect as &quot;Reset scoring progress&quot;). Unchanged settings skip that step.
-      </p>
-      {hint ? <p className="mt-1 text-xs text-zinc-500">{hint}</p> : null}
+    <div className="text-zinc-100">
+      {hint ? <p className="mb-3 text-xs text-zinc-500">{hint}</p> : null}
 
-      <div className="mt-4 space-y-4">
+      <div className="space-y-4">
         <div>
           <label htmlFor="signal-topic-mode" className="block font-mono text-xs text-zinc-400">
-            Topic emphasis
+            Topic
           </label>
           <select
             id="signal-topic-mode"
@@ -111,11 +98,8 @@ export function PipelinePreferencesPanel({
         ) : null}
 
         <div>
-          <span className="block font-mono text-xs text-zinc-400">Focus calibration</span>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            Strict relevance versus a broader lens for adjacent or early signals.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <span className="block font-mono text-xs text-zinc-400">Focus</span>
+          <div className="mt-1.5 flex flex-wrap gap-2">
             {SCOPES.map((s) => (
               <button
                 key={s}
@@ -134,12 +118,9 @@ export function PipelinePreferencesPanel({
           </div>
         </div>
 
-        <div className="border-t border-white/10 pt-4">
+        <div className="border-t border-white/10 pt-3">
           <span className="block font-mono text-xs text-zinc-400">Token budget</span>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            How many stories to score per run. Higher budgets use more Haiku tokens and take longer.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <div className="mt-1.5 flex flex-wrap gap-2">
             {BUDGET_PRESETS.map((preset) => {
               const { label, hint } = BUDGET_PRESET_LABELS[preset]
               const active = matchBudgetPreset(runTuning) === preset

@@ -2,12 +2,6 @@
 
 import { useEffect, useRef } from "react"
 
-// ─── Fixed canvas dimensions (matches reference) ────────────────────────────
-// CSS scales the canvas to fill the container; keeping dimensions fixed makes
-// spawn positions and travel distances perfectly predictable every word.
-const CANVAS_W = 1000
-const CANVAS_H = 500
-
 interface Vector2D {
   x: number
   y: number
@@ -71,17 +65,17 @@ class Particle {
     const g = Math.round(this.startColor.g + (this.targetColor.g - this.startColor.g) * this.colorWeight)
     const b = Math.round(this.startColor.b + (this.targetColor.b - this.startColor.b) * this.colorWeight)
     ctx.fillStyle = `rgb(${r},${g},${b})`
-    ctx.fillRect(this.pos.x, this.pos.y, 2, 2)
+    ctx.fillRect(this.pos.x, this.pos.y, 1, 1)
   }
 
-  kill() {
+  kill(W: number, H: number) {
     if (!this.isKilled) {
       // Scatter to a random off-canvas position (reference pattern)
-      const cx = CANVAS_W / 2
-      const cy = CANVAS_H / 2
-      const mag = (CANVAS_W + CANVAS_H) / 2
-      const rx = Math.random() * CANVAS_W
-      const ry = Math.random() * CANVAS_H
+      const cx = W / 2
+      const cy = H / 2
+      const mag = (W + H) / 2
+      const rx = Math.random() * W
+      const ry = Math.random() * H
       const dx = rx - cx
       const dy = ry - cy
       const m = Math.sqrt(dx * dx + dy * dy) || 1
@@ -103,8 +97,8 @@ class Particle {
 
 export interface WordConfig {
   text: string
-  /** Canvas font string, e.g. "bold 100px Arial" */
-  font?: string
+  /** Canvas font string or a function receiving canvas dimensions, e.g. (w, h) => `bold ${Math.round(h * 0.2)}px Arial` */
+  font?: string | ((canvasW: number, canvasH: number) => string)
   /** Override msPerWord for this specific word only */
   msDuration?: number
 }
@@ -127,7 +121,7 @@ export function ParticleTextEffect({
   msFinalHold = 3000,
   msDisperse = 700,
   onComplete,
-  pixelSteps = 6,
+  pixelSteps = 3,
 }: ParticleTextEffectProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number | undefined>(undefined)
@@ -141,20 +135,24 @@ export function ParticleTextEffect({
     const canvas = canvasRef.current
     if (!canvas) return
 
-    // Fixed dimensions — CSS will stretch to fill the overlay
-    canvas.width = CANVAS_W
-    canvas.height = CANVAS_H
+    // Match canvas buffer to the physical display pixels for crisp rendering.
+    // Canvas dims are set before getContext so the backing store is sized correctly.
+    const dpr = Math.min(window.devicePixelRatio ?? 1, 2)
+    canvas.width = Math.round(canvas.clientWidth * dpr)
+    canvas.height = Math.round(canvas.clientHeight * dpr)
+    const W = canvas.width
+    const H = canvas.height
 
     const ctx = canvas.getContext("2d")!
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
     const randomSpawnPos = (): Vector2D => {
-      const cx = CANVAS_W / 2
-      const cy = CANVAS_H / 2
-      const mag = (CANVAS_W + CANVAS_H) / 2
-      const rx = Math.random() * CANVAS_W
-      const ry = Math.random() * CANVAS_H
+      const cx = W / 2
+      const cy = H / 2
+      const mag = (W + H) / 2
+      const rx = Math.random() * W
+      const ry = Math.random() * H
       const dx = rx - cx
       const dy = ry - cy
       const m = Math.sqrt(dx * dx + dy * dy) || 1
@@ -164,18 +162,22 @@ export function ParticleTextEffect({
     // Directly adapted from the reference nextWord() function
     const buildWord = (idx: number) => {
       const { text, font } = words[idx]
+      const resolvedFont =
+        typeof font === "function"
+          ? font(W, H)
+          : (font ?? `bold ${Math.round(H * 0.2)}px Arial`)
 
       const off = document.createElement("canvas")
-      off.width = CANVAS_W
-      off.height = CANVAS_H
+      off.width = W
+      off.height = H
       const offCtx = off.getContext("2d")!
       offCtx.fillStyle = "white"
-      offCtx.font = font ?? "bold 100px Arial"
+      offCtx.font = resolvedFont
       offCtx.textAlign = "center"
       offCtx.textBaseline = "middle"
-      offCtx.fillText(text, CANVAS_W / 2, CANVAS_H / 2)
+      offCtx.fillText(text, W / 2, H / 2)
 
-      const pixels = offCtx.getImageData(0, 0, CANVAS_W, CANVAS_H).data
+      const pixels = offCtx.getImageData(0, 0, W, H).data
       const particles = particlesRef.current
       let pIdx = 0
 
@@ -187,10 +189,12 @@ export function ParticleTextEffect({
         ;[coords[i], coords[j]] = [coords[j], coords[i]]
       }
 
+      const closeEnough = Math.max(W, H) * 0.08
+
       for (const ci of coords) {
         if (pixels[ci + 3] > 0) {
-          const x = (ci / 4) % CANVAS_W
-          const y = Math.floor(ci / 4 / CANVAS_W)
+          const x = (ci / 4) % W
+          const y = Math.floor(ci / 4 / W)
 
           let p: Particle
           if (pIdx < particles.length) {
@@ -203,12 +207,14 @@ export function ParticleTextEffect({
             const sp = randomSpawnPos()
             p.pos.x = sp.x
             p.pos.y = sp.y
-            p.maxSpeed = Math.random() * 8 + 8   // 8–16 px/frame — snappy arrival
-            p.maxForce = p.maxSpeed * 0.08
-            p.particleSize = Math.random() * 6 + 6
-            p.colorBlendRate = Math.random() * 0.04 + 0.02  // faster colour blend
+            p.maxSpeed = Math.random() * 6 + 5    // 5–11 px/frame — slightly smoother
+            p.maxForce = p.maxSpeed * 0.07
+            p.particleSize = 1
+            p.colorBlendRate = Math.random() * 0.025 + 0.015 // smooth colour blend
             particles.push(p)
           }
+
+          p.closeEnoughTarget = closeEnough
 
           // Transition colour from wherever it is now to white
           p.startColor = {
@@ -225,7 +231,7 @@ export function ParticleTextEffect({
 
       // Kill surplus particles left over from a larger previous word
       for (let i = pIdx; i < particles.length; i++) {
-        particles[i].kill()
+        particles[i].kill(W, H)
       }
     }
 
@@ -241,16 +247,16 @@ export function ParticleTextEffect({
       if (phaseStart === null) phaseStart = ts
       const elapsed = ts - phaseStart
 
-      // Motion-blur background (reference: rgba(0,0,0,0.1))
-      ctx.fillStyle = "rgba(0,0,0,0.1)"
-      ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
+      // Motion-blur background — slightly higher alpha = crisper trails
+      ctx.fillStyle = "rgba(0,0,0,0.14)"
+      ctx.fillRect(0, 0, W, H)
 
       const particles = particlesRef.current
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i]
         p.move()
         p.draw(ctx)
-        if (p.isKilled && (p.pos.x < 0 || p.pos.x > CANVAS_W || p.pos.y < 0 || p.pos.y > CANVAS_H)) {
+        if (p.isKilled && (p.pos.x < 0 || p.pos.x > W || p.pos.y < 0 || p.pos.y > H)) {
           particles.splice(i, 1)
         }
       }
@@ -269,7 +275,7 @@ export function ParticleTextEffect({
             return // Stop the loop — overlay will fade out
           }
           // Scatter everything, then pause before the next word
-          for (const p of particles) p.kill()
+          for (const p of particles) p.kill(W, H)
           phase = "dispersing"
           phaseStart = ts
         }
@@ -301,7 +307,7 @@ export function ParticleTextEffect({
     <canvas
       ref={canvasRef}
       className="block w-full h-full"
-      style={{ imageRendering: "pixelated" }}
+      style={{ display: "block" }}
     />
   )
 }

@@ -504,7 +504,7 @@ export default function LiveFeedPage() {
       <div className="mx-auto w-full max-w-6xl px-5 pb-16 pt-4 md:px-8">
         <header className="sticky top-5 z-20 mb-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/45 px-5 py-3 text-zinc-100 backdrop-blur-xl">
           <Link href="/" className="text-2xl font-semibold tracking-tight text-white">
-            Signal
+            Dev Signal
           </Link>
           <div className="flex flex-wrap items-center gap-3">
             <button

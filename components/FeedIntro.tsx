@@ -3,11 +3,14 @@
 import { useState, useCallback, useEffect } from "react"
 import { ParticleTextEffect, type WordConfig } from "@/components/ui/particle-text-effect"
 
+/** Extra ms once the word reads as formed before disperse; @kbxxxj keeps default timing. */
+const HOLD_AFTER_FORM_MS = 600
+
 const INTRO_WORDS: WordConfig[] = [
-  { text: "This is",   font: "300 72px Georgia, serif" },
-  { text: "DevSignal", font: "bold 120px Georgia, serif" },
-  { text: "By",        font: "300 72px Georgia, serif",           msDuration: 2200 },
-  { text: "@kbxxxj",   font: "bold 90px 'Courier New', monospace" },
+  { text: "This is",    font: (w) => `300 ${Math.round(w * 0.04)}px Georgia, serif`,    msDuration: 2800 + HOLD_AFTER_FORM_MS },
+  { text: "Dev Signal", font: (w) => `600 ${Math.round(w * 0.065)}px Georgia, serif`,   msDuration: 2800 + HOLD_AFTER_FORM_MS },
+  { text: "By",         font: (w) => `300 ${Math.round(w * 0.04)}px Georgia, serif`,     msDuration: 2200 + HOLD_AFTER_FORM_MS },
+  { text: "@kbxxxj",    font: (w) => `400 ${Math.round(w * 0.05)}px 'Courier New', monospace` },
 ]
 
 interface FeedIntroProps {

@@ -6,7 +6,7 @@ import { ServiceWorkerRegistrar } from '@/components/ServiceWorkerRegistrar'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Signal — Personal Intelligence Feed',
+  title: 'Dev Signal — Personal Intelligence Feed',
   description: 'AI-filtered news for crypto & AI opportunities',
 }
 
