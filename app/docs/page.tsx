@@ -264,9 +264,9 @@ export default function DocsPage() {
                   <p className="font-mono text-[10px] uppercase tracking-widest text-zinc-600 mb-3">Token budgets</p>
                   <div className="grid gap-2 sm:grid-cols-3">
                     {[
-                      { preset: 'Light', candidates: 40, batch: 20, tokens: '~6.5K in / 4.5K out' },
-                      { preset: 'Standard', candidates: 80, batch: 24, tokens: '~13K in / 9K out' },
-                      { preset: 'Deep', candidates: 150, batch: 30, tokens: '~25K in / 17K out' },
+                      { preset: 'Light', candidates: 80, batch: 24, tokens: '~24K in / 10K out (est.)' },
+                      { preset: 'Standard', candidates: 200, batch: 28, tokens: '~49K in / 25K out (est.)' },
+                      { preset: 'Deep', candidates: 300, batch: 40, tokens: '~70K in / 38K out (est.)' },
                     ].map((p) => (
                       <div key={p.preset} className="rounded-xl border border-white/8 bg-white/[0.03] p-4">
                         <p className="font-medium text-zinc-100 text-sm">{p.preset}</p>

@@ -228,7 +228,7 @@ Template is in `.env.local.example` — copy and fill in.
 **Optional tuning (filter + pool):**
 ```
 FILTER_RAW_FETCH_LIMIT=800     # cap 800 — raw_stories rows considered per filter run (Phase 4 default in .env.local)
-FILTER_MAX_CANDIDATES=150      # cap 200 — max unscored candidates scored per run
+FILTER_MAX_CANDIDATES=300      # server ceiling for candidates per run (raise for Deep=300; lower to save cost)
 FILTER_BATCH_SIZE=24           # cap 40 — Haiku batch size (clamped to max candidates)
 FEED_MAX_AGE_DAYS=7            # max age in days for scoring + REST feed by published_at (filter uses intEnv 1–30; stories route parseInt, default 7)
 ```
